@@ -1,5 +1,6 @@
 <Solution>
   <Project Path="src/SmartArchiver.Cli/SmartArchiver.Cli.csproj" />
   <Project Path="src/SmartArchiver.Core/SmartArchiver.Core.csproj" />
+  <Project Path="src/SmartArchiver.Data/SmartArchiver.Data.csproj" />
   <Project Path="tests/SmartArchiver.Core.Tests/SmartArchiver.Core.Tests.csproj" />
 </Solution>
