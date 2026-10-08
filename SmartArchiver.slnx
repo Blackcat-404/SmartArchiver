@@ -3,4 +3,5 @@
   <Project Path="src/SmartArchiver.Core/SmartArchiver.Core.csproj" />
   <Project Path="src/SmartArchiver.Data/SmartArchiver.Data.csproj" />
   <Project Path="tests/SmartArchiver.Core.Tests/SmartArchiver.Core.Tests.csproj" />
+  <Project Path="tests/SmartArchiver.Data.Tests/SmartArchiver.Data.Tests.csproj" />
 </Solution>
