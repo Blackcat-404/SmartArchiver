@@ -1,6 +1,6 @@
 # Як запустити
 
-Потрібен .NET SDK 8 (`dotnet --version`).
+Потрібен .NET SDK 10 (`dotnet --version`).
 
 ```
 dotnet test                                    # 89 тестів

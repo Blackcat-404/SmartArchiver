@@ -1,8 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <!-- Якщо команда сидить на іншому .NET (наприклад, net10.0), міняється лише цей рядок і dotnet-version у ci.yml. -->
-    <TargetFramework>net8.0</TargetFramework>
+    <!-- Якщо команда перейде на іншу версію .NET, міняється TargetFramework у всіх .csproj і dotnet-version у ci.yml. -->
+    <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>SmartArchiver.Core</RootNamespace>
