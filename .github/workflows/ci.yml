@@ -38,6 +38,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Тестам БД потрібен SQL Server. Контейнер є лише на Linux: Windows-раннери GitHub не запускають
+      # Linux-контейнери, тож там ці тести пропускаються (див. DatabaseFactAttribute).
+      # Стартуємо до збірки, щоб сервер піднімався паралельно. Пароль новий на кожен прогін і замаскований у логах.
+      - name: Start SQL Server (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          password="Ci_$(openssl rand -hex 16)"
+          echo "::add-mask::$password"
+          echo "SQL_SA_PASSWORD=$password" >> "$GITHUB_ENV"
+          docker run -d --name sql -p 1433:1433 \
+            -e ACCEPT_EULA=Y -e "MSSQL_SA_PASSWORD=$password" \
+            mcr.microsoft.com/mssql/server:2025-latest
+
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
@@ -56,11 +69,26 @@ jobs:
       - name: Build
         run: dotnet build ${{ env.SOLUTION }} --configuration Release --no-restore
 
+      # Чекаємо, поки сервер прийме вхід, і лише тоді вмикаємо тести БД.
+      - name: Wait for SQL Server (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          for attempt in $(seq 1 60); do
+            if docker exec sql /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$SQL_SA_PASSWORD" -C -Q "SELECT 1" > /dev/null 2>&1; then
+              echo "SMARTARCHIVER_TEST_SQLSERVER=Server=localhost,1433;User Id=sa;Password=$SQL_SA_PASSWORD;TrustServerCertificate=true" >> "$GITHUB_ENV"
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs sql
+          exit 1
+
+      # LogFilePrefix, а не LogFileName: тестових проєктів кілька, і з однаковою назвою звіти затирали б один одного.
       - name: Test
         run: >
           dotnet test ${{ env.SOLUTION }}
           --configuration Release --no-build
-          --logger "trx;LogFileName=test-results.trx"
+          --logger "trx;LogFilePrefix=test-results"
           --collect:"XPlat Code Coverage"
           --results-directory ./TestResults
 
