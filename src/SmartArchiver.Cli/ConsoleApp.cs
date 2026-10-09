@@ -1,12 +1,13 @@
 using System.Text;
 using SmartArchiver.Core;
+using SmartArchiver.Data;
 
 namespace SmartArchiver.Cli;
 
 /// <summary>
 /// Консольний інтерфейс чекпоінта 1.
 /// Без аргументів запускає інтерактивне меню, з аргументами працює як звичайна команда
-/// (pack, unpack, info, demo).
+/// (pack, unpack, info, demo, db).
 /// </summary>
 internal static class ConsoleApp
 {
@@ -26,6 +27,11 @@ internal static class ConsoleApp
         {
             Write($"[ПОМИЛКА] Проблема з файлами: {ex.Message}", ConsoleColor.Red);
             return 3;
+        }
+        catch (DatabaseException ex)
+        {
+            Write($"[ПОМИЛКА] База даних: {ex.Message}", ConsoleColor.Red);
+            return 4;
         }
     }
 
@@ -49,6 +55,9 @@ internal static class ConsoleApp
             case "demo" when args.Length == 1:
                 Demo();
                 return 0;
+            case "db" when args.Length == 1:
+                ShowDatabase();
+                return 0;
             default:
                 Console.WriteLine("Використання:");
                 Console.WriteLine("  smartarchiver                            інтерактивне меню");
@@ -56,6 +65,7 @@ internal static class ConsoleApp
                 Console.WriteLine("  smartarchiver unpack <archive.arc> <тека>   розпакувати");
                 Console.WriteLine("  smartarchiver info <archive.arc>            показати вміст");
                 Console.WriteLine("  smartarchiver demo                          автоматична демонстрація");
+                Console.WriteLine("  smartarchiver db                            стан бази даних (створює її, якщо ще немає)");
                 return 1;
         }
     }
@@ -78,6 +88,7 @@ internal static class ConsoleApp
             Console.WriteLine("  2) Розпакувати архів");
             Console.WriteLine("  3) Показати вміст архіву (заголовок і таблиця файлів)");
             Console.WriteLine("  4) Демонстрація: усі можливості на прикладі");
+            Console.WriteLine("  5) База даних: стан і створення схеми");
             Console.WriteLine("  0) Вихід");
 
             string? choice = Prompt("Ваш вибір");
@@ -92,11 +103,12 @@ internal static class ConsoleApp
                 case "2": Guard(UnpackInteractive); break;
                 case "3": Guard(InfoInteractive); break;
                 case "4": Guard(Demo); break;
+                case "5": Guard(ShowDatabase); break;
                 case "0":
                     Console.WriteLine("До побачення!");
                     return 0;
                 default:
-                    Write("Невідомий пункт. Введіть число від 0 до 4.", ConsoleColor.Yellow);
+                    Write("Невідомий пункт. Введіть число від 0 до 5.", ConsoleColor.Yellow);
                     break;
             }
         }
@@ -116,6 +128,10 @@ internal static class ConsoleApp
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
         {
             Write($"[ПОМИЛКА] Проблема з файлами: {ex.Message}", ConsoleColor.Red);
+        }
+        catch (DatabaseException ex)
+        {
+            Write($"[ПОМИЛКА] База даних: {ex.Message}", ConsoleColor.Red);
         }
     }
 
@@ -298,6 +314,30 @@ internal static class ConsoleApp
         PrintFileTable(files, 0);
         Write("[OK] Структура коректна, CRC32 усіх файлів збігається.", ConsoleColor.Green);
     }
+
+    private static void ShowDatabase()
+    {
+        IMeasurementStore store = OpenMeasurementStore();
+
+        Console.WriteLine();
+        if (!store.IsEnabled)
+        {
+            Write("База даних вимкнена: рядок підключення порожній.", ConsoleColor.Yellow);
+            Console.WriteLine("Щоб увімкнути, вкажіть його в src/SmartArchiver.Cli/appsettings.Local.json (див. README).");
+            return;
+        }
+
+        store.EnsureCreated();
+        Write($"[OK] База даних готова: {store.Description}", ConsoleColor.Green);
+        Console.WriteLine($"Збережено прогонів вимірювання Q: {store.CountRuns()}");
+    }
+
+    /// <summary>
+    /// Рядок підключення читається з appsettings.json і appsettings.Local.json поруч із програмою.
+    /// До сервера звертаються лише команди, яким потрібна БД, тож pack і unpack працюють і без неї.
+    /// </summary>
+    private static IMeasurementStore OpenMeasurementStore() =>
+        MeasurementStore.Open(DatabaseSettings.ReadConnectionString(AppContext.BaseDirectory));
 
     // ------------------------------------------------------------------
     // Демонстрація

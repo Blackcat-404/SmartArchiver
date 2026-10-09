@@ -11,6 +11,12 @@
 
   <ItemGroup>
     <ProjectReference Include="..\SmartArchiver.Core\SmartArchiver.Core.csproj" />
+    <ProjectReference Include="..\SmartArchiver.Data\SmartArchiver.Data.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- appsettings.Local.json holds the personal connection string and is ignored by git. -->
+    <None Update="appsettings*.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

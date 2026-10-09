@@ -1,3 +1,6 @@
-using SmartArchiver.Cli;
+namespace SmartArchiver.Cli;
 
-return ConsoleApp.Run(args);
+internal static class Program
+{
+    private static int Main(string[] args) => ConsoleApp.Run(args);
+}
