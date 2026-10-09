@@ -2,7 +2,7 @@ namespace SmartArchiver.Core;
 
 /// <summary>
 /// Тип файлу за аналізатором. Сім груп корпусу + Unknown.
-/// Числові значення тимчасові: остаточно їх визначає контракт IFileAnalyzer (Frostouch).
+/// Числові значення тимчасові: остаточно їх визначає контракт IFileAnalyzer (Blackcat-404).
 /// </summary>
 public enum FileKind : byte
 {

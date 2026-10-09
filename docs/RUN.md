@@ -3,7 +3,7 @@
 Потрібен .NET SDK 10 (`dotnet --version`).
 
 ```
-dotnet test                                    # 89 тестів
+dotnet test                                    # автотести (тести БД без SQL Server пропускаються, див. README)
 dotnet run --project src/SmartArchiver.Cli     # інтерактивне меню
 ```
 
