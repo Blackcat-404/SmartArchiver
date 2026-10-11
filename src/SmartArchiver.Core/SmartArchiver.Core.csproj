@@ -8,4 +8,7 @@
     <RootNamespace>SmartArchiver.Core</RootNamespace>
   </PropertyGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="SmartArchiver.Core.Tests" />
+  </ItemGroup>
 </Project>
