@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using SmartArchiver.Core;
 using SmartArchiver.Data;
@@ -176,7 +177,7 @@ internal static class ConsoleApp
             return;
         }
 
-        string? sizeText = Prompt("Розмір блока в байтах (великі файли ріжуться на блоки)", FormatConstants.DefaultBlockSize.ToString());
+        string? sizeText = Prompt("Розмір блока в байтах (великі файли ріжуться на блоки)", FormatConstants.DefaultBlockSize.ToString(CultureInfo.InvariantCulture));
         int blockSize = FormatConstants.DefaultBlockSize;
         if (!int.TryParse(sizeText, out blockSize) || blockSize <= 0)
         {
@@ -427,7 +428,7 @@ internal static class ConsoleApp
     // Допоміжне
     // ------------------------------------------------------------------
 
-    private static bool SameContent(IReadOnlyList<ArchiveInput> inputs, IReadOnlyList<ExtractedFile> restored)
+    private static bool SameContent(List<ArchiveInput> inputs, IReadOnlyList<ExtractedFile> restored)
     {
         if (inputs.Count != restored.Count)
         {
@@ -466,7 +467,7 @@ internal static class ConsoleApp
     }
 
     private static string Fit(string text, int width) =>
-        text.Length <= width ? text : text.Substring(0, width - 3) + "...";
+        text.Length <= width ? text : string.Concat(text.AsSpan(0, width - 3), "...");
 
     private static string Explain(ArchiveException ex)
     {
