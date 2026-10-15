@@ -1,4 +1,5 @@
 <Solution>
+  <Project Path="src/SmartArchiver.Analysis/SmartArchiver.Analysis.csproj" />
   <Project Path="src/SmartArchiver.App/SmartArchiver.App.csproj" />
   <Project Path="src/SmartArchiver.Archive/SmartArchiver.Archive.csproj" />
   <Project Path="src/SmartArchiver.Cli/SmartArchiver.Cli.csproj" />
@@ -6,6 +7,7 @@
   <Project Path="src/SmartArchiver.Core/SmartArchiver.Core.csproj" />
   <Project Path="src/SmartArchiver.Data/SmartArchiver.Data.csproj" />
   <Project Path="src/SmartArchiver.Security/SmartArchiver.Security.csproj" />
+  <Project Path="tests/SmartArchiver.Analysis.Tests/SmartArchiver.Analysis.Tests.csproj" />
   <Project Path="tests/SmartArchiver.Archive.Tests/SmartArchiver.Archive.Tests.csproj" />
   <Project Path="tests/SmartArchiver.Compression.Tests/SmartArchiver.Compression.Tests.csproj" />
   <Project Path="tests/SmartArchiver.Data.Tests/SmartArchiver.Data.Tests.csproj" />
