@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using SmartArchiver.Archive;
 using SmartArchiver.Core;
 using SmartArchiver.Data;
 

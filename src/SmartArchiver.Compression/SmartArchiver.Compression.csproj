@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\SmartArchiver.Core\SmartArchiver.Core.csproj" />
+    <Using Include="SmartArchiver.Core" />
+    <InternalsVisibleTo Include="SmartArchiver.Compression.Tests" />
+  </ItemGroup>
+
+</Project>

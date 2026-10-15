@@ -1,7 +1,0 @@
-<Project Sdk="Microsoft.NET.Sdk">
-
-  <ItemGroup>
-    <ProjectReference Include="..\..\src\SmartArchiver.Core\SmartArchiver.Core.csproj" />
-  </ItemGroup>
-
-</Project>

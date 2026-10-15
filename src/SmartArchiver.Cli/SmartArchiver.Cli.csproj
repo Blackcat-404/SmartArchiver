@@ -6,7 +6,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\SmartArchiver.Core\SmartArchiver.Core.csproj" />
+    <ProjectReference Include="..\SmartArchiver.Archive\SmartArchiver.Archive.csproj" />
     <ProjectReference Include="..\SmartArchiver.Data\SmartArchiver.Data.csproj" />
   </ItemGroup>
 
