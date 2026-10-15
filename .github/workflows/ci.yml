@@ -54,7 +54,7 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: 10.0.x   # має збігатися з TargetFramework у .csproj
+          global-json-file: global.json
 
       - name: Cache NuGet packages
         uses: actions/cache@v4
@@ -66,8 +66,9 @@ jobs:
       - name: Restore
         run: dotnet restore ${{ env.SOLUTION }}
 
+      # -warnaserror: в CI будь-яке попередження лінтера або компілятора ламає збірку.
       - name: Build
-        run: dotnet build ${{ env.SOLUTION }} --configuration Release --no-restore
+        run: dotnet build ${{ env.SOLUTION }} --configuration Release --no-restore -warnaserror
 
       # Чекаємо, поки сервер прийме вхід, і лише тоді вмикаємо тести БД.
       - name: Wait for SQL Server (Linux)
