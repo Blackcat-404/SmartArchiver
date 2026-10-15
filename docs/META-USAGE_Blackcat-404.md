@@ -531,3 +531,264 @@ jobs:
 **Що змінено в репозиторії.** Коміт `f8fd2ab` (`ci: run database tests against SQL Server on Linux`): `ci.yml` з відповіді без змін.
 
 **Як перевірено** (разом з асистентом). Кроки Start і Wait прогнали локально тими самими командами, лише з окремим контейнером на іншому порту. Сервер прийняв вхід приблизно за 8 с, усі 14 тестів `SmartArchiver.Data.Tests` виконалися (жоден не пропущено) і пройшли, звітів `.trx` два. Перевірено також, що без SQL Server 3 тести БД позначаються як пропущені, а не падають.
+
+
+## 4. Ознаки файлу для класифікатора
+
+**Дата:** 2026-10-15
+
+**Задача.** Почати свою зону «Аналіз файлу»: порахувати числові ознаки вмісту, за якими потім перцептрон визначатиме тип файлу.
+
+**Промпт:**
+
+> Мені треба зробити аналіз файлу для архіватора: обчислити ознаки — ентропію Шеннона, гістограму байтів, частку друкованих ASCII, середню довжину рядка, автокореляцію на лагах 1–16 і ентропію біграм. Поясни, що означає кожна ознака, як її правильно рахувати і як перевірити тестами, і дай приклад коду на C#, від якого можна відштовхуватися.
+
+**Відповідь:**
+
+Ознаки — це «відбиток» файлу у вигляді кількох чисел. Жодна з них окремо не визначає тип, але разом вони добре розрізняють текст, код, картинки, виконувані файли й уже стиснені дані. Тому їх і подають на вхід класифікатору, а не приймають рішення за одним порогом на кшталт «висока ентропія — не стискати» (методичка, 10.28).
+
+| Ознака | Як рахувати | Що показує |
+| --- | --- | --- |
+| Ентропія байтів | `H = −Σ p·log2 p` по 256 значеннях, де `p` — частота значення | 0 для одного повторюваного байта, ≈8 для шуму і стиснених даних, 4–5 для тексту |
+| Гістограма | частота кожного значення байта, сума 1 | «склад» файлу: у тексті багато літер і пробілів, у картинках — нулі й 0xFF |
+| Частка друкованих ASCII | байти `0x20…0x7E` плюс `\t`, `\n`, `\r`, поділені на довжину | близько 1 для англійського тексту й коду, близько 0.38 для шуму |
+| Середня довжина рядка | символи без `\n` і `\r`, поділені на кількість рядків | у коді 30–60, у прозі довше, у бінарних файлах «рядки» випадкові |
+| Автокореляція, лаги 1–16 | `r(k) = Σ(x[i]−m)(x[i+k]−m) / Σ(x[i]−m)²` | чи пов'язаний байт із байтом через `k` позицій: у шумі ≈0, у растрі піки на кроці пікселя (наприклад, 4 для RGBA) |
+| Ентропія біграм | та сама формула по парах сусідніх байтів, 0…16 біт | у тексті пари повторюються, тож вона значно нижча, ніж у шуму |
+
+На що звернути увагу:
+
+- **Крайні випадки.** Порожній файл дає нулі, а не ділення на нуль. Для сталих даних дисперсія нульова, тож автокореляцію визначаємо як 0. Лаг, не менший за довжину даних, теж дає 0.
+- **`\r` не рахуємо в довжину рядка**, щоб один і той самий текст з Windows (CRLF) і з Linux (LF) мав однакові ознаки.
+- **Кирилиця в UTF-8** займає два байти поза ASCII, тому в українському тексті частка друкованих ASCII близько 40%. Це не помилка: ознака описує саме ASCII, а відрізнити такий текст від бінарних даних допоможуть ентропія й автокореляція.
+- **Ентропію біграм** зручно рахувати масивом на 65 536 лічильників, індекс `(попередній << 8) | поточний`.
+
+Перевіряти ознаки варто на даних з відомою відповіддю (методичка, 10.41), ще до того, як щось навчати:
+
+- нулі: ентропія 0, друкованих 0, автокореляція 0;
+- байти 0…255 порівну: ентропія рівно 8;
+- `"abababab"`: ентропія рівно 1 біт;
+- шум: ентропія понад 7.9, автокореляція близька до 0;
+- англійський текст: усі символи друковані, ентропія нижча за 5;
+- чергування `0, 255, 0, 255`: автокореляція ≈ −1 на непарних лагах і ≈ +1 на парних.
+
+Приклад, від якого можна відштовхуватися: головні обчислення — ентропія, ентропія біграм і автокореляція. Гістограма, частка друкованих символів і довжина рядків рахуються з тих самих лічильників байтів.
+
+```csharp
+/// <summary>H = -sum(p * log2 p) over the counted symbols.</summary>
+private static double Entropy(ReadOnlySpan<long> counts, long total)
+{
+    if (total == 0)
+        return 0;
+    double entropy = 0;
+    foreach (long count in counts)
+    {
+        if (count == 0)
+            continue;
+        double p = (double)count / total;
+        entropy -= p * Math.Log2(p);
+    }
+    return entropy;
+}
+
+private static double BigramEntropy(ReadOnlySpan<byte> data)
+{
+    if (data.Length < 2)
+        return 0;
+    var counts = new long[256 * 256];
+    for (int i = 1; i < data.Length; i++)
+        counts[(data[i - 1] << 8) | data[i]]++;
+    return Entropy(counts, data.Length - 1);
+}
+
+/// <summary>
+/// Sample autocorrelation r(k) = sum((x[i] - m) * (x[i+k] - m)) / sum((x[i] - m)^2) for k = 1..16.
+/// A constant sequence or a lag not shorter than the data gives 0.
+/// </summary>
+private static double[] Autocorrelation(ReadOnlySpan<byte> data)
+{
+    var result = new double[AutocorrelationLags];
+    if (data.Length < 2)
+        return result;
+
+    double mean = 0;
+    foreach (byte b in data)
+        mean += b;
+    mean /= data.Length;
+
+    double variance = 0;
+    foreach (byte b in data)
+        variance += (b - mean) * (b - mean);
+    if (variance == 0)
+        return result;
+
+    for (int lag = 1; lag <= AutocorrelationLags && lag < data.Length; lag++)
+    {
+        double sum = 0;
+        for (int i = 0; i + lag < data.Length; i++)
+            sum += (data[i] - mean) * (data[i + lag] - mean);
+        result[lag - 1] = sum / variance;
+    }
+    return result;
+}
+```
+
+**Що потрапило в репозиторій.** На основі цієї відповіді асистент згенерував проєкт `SmartArchiver.Analysis` з `FileFeatures` і `FeatureExtractor`, тести `FeatureExtractorTests` (23) і команду `analyze` у CLI. Фрагменти вище взято з коду, що потрапив у репозиторій; повністю цей код згенерував асистент. Я переглянув зміни й закомітив їх (`feat(analysis): compute file features for the classifier`, `feat(cli): show file features with the analyze command`).
+
+**Як перевірено** (разом з асистентом).
+
+- 23 тести ознак проходять.
+- Тести справді ловлять помилки: якщо прибрати пробіл з друкованих символів, падає 1 тест; якщо рахувати ентропію натуральним логарифмом замість двійкового, падає 5.
+- Команда `analyze` на реальних файлах дає очікувану картину:
+  - код C# — 100% друкованих, ентропія 4.7;
+  - шум — 8.0 і 15.2 біта, автокореляція нульова;
+  - іконка — піки автокореляції на лагах 4, 8, 12, 16 (пікселі по 4 байти);
+  - український README — 40% друкованих ASCII через кирилицю.
+
+## 5. Багатошаровий перцептрон без бібліотек
+
+**Дата:** 2026-10-15
+
+**Задача.** Зробити власний перцептрон, який на CP2 класифікуватиме файли за ознаками з запису 4 на 7 типів (`file_type` 0…6 з `FORMAT_SPEC_P2`).
+
+**Промпт:**
+
+> Тепер потрібен багатошаровий перцептрон без готових бібліотек: довільна кількість шарів, навчання зворотним поширенням помилки, збереження і завантаження ваг. Поясни, як це влаштовано, які функції активації й втрат обрати для класифікації на 7 класів, як перевірити, що зворотне поширення правильне, і дай приклад коду, від якого можна відштовхуватися.
+
+**Відповідь:**
+
+**Прямий прохід.** Кожен шар рахує `z = W·a + b` для виходу попереднього шару `a`. У прихованих шарах до `z` застосовують нелінійність, на виході — softmax, щоб отримати ймовірності класів, які в сумі дають 1.
+
+**Вибір активацій і втрат:**
+
+- **Вихід: softmax + cross-entropy.** Це стандарт для кількох класів. Втрата `L = −ln p[правильний клас]` велика, коли мережа впевнено помиляється. Головна перевага — простий градієнт на виході: `∂L/∂z = p − onehot(клас)`.
+- **Приховані шари: `tanh`.** Значення центровані навколо нуля, похідна виражається через сам вихід: `tanh' = 1 − a²`. Sigmoid вчиться повільніше через нецентровані значення, а ReLU в маленьких мережах легко дає «мертві» нейрони.
+
+**Зворотне поширення.** Похибку `δ` на виході передаємо назад шар за шаром:
+
+```
+δ_вихід          = p − onehot(клас)
+∂L/∂W[шар][o,i]  = δ[o] · a_попередній[i]
+∂L/∂b[шар][o]    = δ[o]
+δ_попередній[i]  = (Σ_o W[шар][o,i] · δ[o]) · (1 − a_попередній[i]²)
+```
+
+**Навчання.** Стохастичний градієнтний спуск: після кожного прикладу `W ← W − η·∂L/∂W`.
+
+**Початкові ваги.** Нульові ваги не годяться: усі нейрони шару вчилися б однаково. Беруть рівномірні значення в межах `±√(6/(n_in + n_out))` (ініціалізація Глоро) з генератора із заданим seed. Seed робить запуск відтворюваним, а методичка вимагає порівнювати кілька ініціалізацій і обирати модель за macro-F1 на valid.
+
+**Як перевірити** (методичка, 6.11):
+
+1. **Прямий прохід на вручну заданих вагах.** Відповідь рахується на папері й порівнюється.
+2. **Значення втрати.** Для відомої ймовірності `L = −ln p`.
+3. **Чисельний градієнт.** Для кожної ваги `(L(w+h) − L(w−h)) / 2h` має збігтися з тим, що дає зворотне поширення. Це найсильніша перевірка: вона ловить будь-яку помилку у формулах.
+4. **Навчання на XOR.** XOR не розділяється однією прямою, тож без прихованого шару його не вивчити. Втрата має впасти в рази, і всі 4 випадки мають класифікуватися правильно.
+5. **Збереження і завантаження.** Після них мережа дає ті самі відповіді.
+
+**Збереження ваг.** JSON (`System.Text.Json` входить до .NET): розміри шарів, ваги, зсуви. При завантаженні варто перевірити, що кількість ваг відповідає розмірам шарів, інакше пошкоджений файл дасть незрозумілу помилку пізніше.
+
+**Швидкість навчання** підбирають експериментом. Для оновлень після кожного прикладу забагато — це коли мережа «перестрибує» мінімум і застрягає.
+
+Приклад, від якого можна відштовхуватися: softmax, втрата і зворотне поширення. Прямий прохід, навчання й збереження ваг будуються навколо них.
+
+```csharp
+private static double[] Softmax(double[] z)
+{
+    double max = z.Max();
+    double[] exp = Array.ConvertAll(z, v => Math.Exp(v - max));
+    double sum = exp.Sum();
+    return Array.ConvertAll(exp, v => v / sum);
+}
+
+private static double CrossEntropy(double[] probabilities, int target) =>
+    -Math.Log(Math.Max(probabilities[target], double.Epsilon));
+
+/// <summary>
+/// For softmax with cross-entropy the error at the output is p - onehot(target).
+/// Going back, each hidden error is the weighted sum of the next layer's errors times tanh' = 1 - a^2.
+/// </summary>
+private (double[][] WeightGrads, double[][] BiasGrads) Backpropagate(double[][] activations, int target)
+{
+    var weightGrads = new double[Weights.Length][];
+    var biasGrads = new double[Weights.Length][];
+
+    double[] delta = (double[])activations[^1].Clone();
+    delta[target] -= 1;
+
+    for (int layer = Weights.Length - 1; layer >= 0; layer--)
+    {
+        double[] input = activations[layer];
+        weightGrads[layer] = new double[Weights[layer].Length];
+        for (int o = 0; o < delta.Length; o++)
+        {
+            for (int i = 0; i < input.Length; i++)
+                weightGrads[layer][o * input.Length + i] = delta[o] * input[i];
+        }
+        biasGrads[layer] = (double[])delta.Clone();
+
+        if (layer == 0)
+            break;
+        var previousDelta = new double[input.Length];
+        for (int i = 0; i < input.Length; i++)
+        {
+            double sum = 0;
+            for (int o = 0; o < delta.Length; o++)
+                sum += Weights[layer][o * input.Length + i] * delta[o];
+            previousDelta[i] = sum * (1 - input[i] * input[i]);
+        }
+        delta = previousDelta;
+    }
+    return (weightGrads, biasGrads);
+}
+```
+
+Перевірка зворотного поширення чисельним градієнтом:
+
+```csharp
+[Fact]
+public void Gradients_MatchNumericalDerivativeOfLoss()
+{
+    var net = new Perceptron([3, 4, 3], seed: 5);
+    double[] input = [0.5, -1, 2];
+    const int target = 2;
+    const double h = 1e-5;
+
+    (double[][] weightGrads, double[][] biasGrads) = net.Gradients(input, target);
+
+    for (int layer = 0; layer < net.Weights.Length; layer++)
+    {
+        AssertNumericalMatch(net, net.Weights[layer], weightGrads[layer], input, target, h);
+        AssertNumericalMatch(net, net.Biases[layer], biasGrads[layer], input, target, h);
+    }
+}
+
+private static void AssertNumericalMatch(
+    Perceptron net, double[] parameters, double[] analytic, double[] input, int target, double h)
+{
+    for (int i = 0; i < parameters.Length; i++)
+    {
+        double original = parameters[i];
+        parameters[i] = original + h;
+        double plus = net.Loss(input, target);
+        parameters[i] = original - h;
+        double minus = net.Loss(input, target);
+        parameters[i] = original;
+
+        double numerical = (plus - minus) / (2 * h);
+        Assert.True(
+            Math.Abs(numerical - analytic[i]) <= 1e-6 * Math.Max(1, Math.Abs(numerical) + Math.Abs(analytic[i])),
+            $"parameter {i}: numerical {numerical}, backpropagation {analytic[i]}");
+    }
+}
+
+// With learning rate 0.1 and 4 hidden neurons all of seeds 1..30 learn XOR in 2000 epochs;
+// with 0.5 about half of them get stuck, so 0.5 is too large for per-sample updates.
+```
+
+**Що потрапило в репозиторій.** Асистент згенерував `Perceptron` і тести `PerceptronTests` (20); фрагменти вище взято з цього коду. Я переглянув зміни й закомітив їх (`feat(analysis): multilayer perceptron with training and saved weights`). Обґрунтування вибору записано в `docs/decisions.md`, запис 18.
+
+**Як перевірено** (разом з асистентом).
+
+- Усі 20 тестів перцептрона проходять: прямий прохід, втрата, чисельний градієнт, XOR з трьох seed, збереження й завантаження, відхилення пошкоджених файлів ваг.
+- Перший варіант тесту XOR зі швидкістю навчання `0.5` не пройшов: мережа застрягла. Перевірка на 30 seed показала, що з `0.5` вчиться лише близько половини запусків, а з `0.1` і 4 прихованими нейронами — всі 30. Тому тест використовує `0.1` і кілька seed.
+- Тести ловлять помилку у зворотному поширенні: якщо замінити похідну `1 − a²` на `1 − a`, падають чисельна перевірка градієнта і навчання XOR.
