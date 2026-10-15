@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using SmartArchiver.Analysis;
 using SmartArchiver.Archive;
 using SmartArchiver.Core;
 using SmartArchiver.Data;
@@ -9,7 +10,7 @@ namespace SmartArchiver.Cli;
 /// <summary>
 /// Консольний інтерфейс чекпоінта 1.
 /// Без аргументів запускає інтерактивне меню, з аргументами працює як звичайна команда
-/// (pack, unpack, info, demo, db).
+/// (pack, unpack, info, demo, db, analyze).
 /// </summary>
 internal static class ConsoleApp
 {
@@ -60,6 +61,9 @@ internal static class ConsoleApp
             case "db" when args.Length == 1:
                 ShowDatabase();
                 return 0;
+            case "analyze" when args.Length == 2:
+                AnalyzeFile(args[1]);
+                return 0;
             default:
                 Console.WriteLine("Використання:");
                 Console.WriteLine("  smartarchiver                            інтерактивне меню");
@@ -68,6 +72,7 @@ internal static class ConsoleApp
                 Console.WriteLine("  smartarchiver info <archive.arc>            показати вміст");
                 Console.WriteLine("  smartarchiver demo                          автоматична демонстрація");
                 Console.WriteLine("  smartarchiver db                            стан бази даних (створює її, якщо ще немає)");
+                Console.WriteLine("  smartarchiver analyze <файл>                ознаки вмісту файлу (ентропія, текстовість тощо)");
                 return 1;
         }
     }
@@ -91,6 +96,7 @@ internal static class ConsoleApp
             Console.WriteLine("  3) Показати вміст архіву (заголовок і таблиця файлів)");
             Console.WriteLine("  4) Демонстрація: усі можливості на прикладі");
             Console.WriteLine("  5) База даних: стан і створення схеми");
+            Console.WriteLine("  6) Аналіз файлу: ознаки вмісту");
             Console.WriteLine("  0) Вихід");
 
             string? choice = Prompt("Ваш вибір");
@@ -106,11 +112,12 @@ internal static class ConsoleApp
                 case "3": Guard(InfoInteractive); break;
                 case "4": Guard(Demo); break;
                 case "5": Guard(ShowDatabase); break;
+                case "6": Guard(AnalyzeInteractive); break;
                 case "0":
                     Console.WriteLine("До побачення!");
                     return 0;
                 default:
-                    Write("Невідомий пункт. Введіть число від 0 до 5.", ConsoleColor.Yellow);
+                    Write("Невідомий пункт. Введіть число від 0 до 6.", ConsoleColor.Yellow);
                     break;
             }
         }
@@ -233,6 +240,17 @@ internal static class ConsoleApp
         ShowInfo(archivePath);
     }
 
+    private static void AnalyzeInteractive()
+    {
+        string? path = Prompt("Шлях до файлу");
+        if (string.IsNullOrEmpty(path))
+        {
+            Write("Шлях не вказано.", ConsoleColor.Yellow);
+            return;
+        }
+        AnalyzeFile(path);
+    }
+
     // ------------------------------------------------------------------
     // Дії
     // ------------------------------------------------------------------
@@ -340,6 +358,42 @@ internal static class ConsoleApp
     /// </summary>
     private static IMeasurementStore OpenMeasurementStore() =>
         MeasurementStore.Open(DatabaseSettings.ReadConnectionString(AppContext.BaseDirectory));
+
+    /// <summary>Показує ознаки, за якими класифікатор розрізнятиме типи файлів.</summary>
+    private static void AnalyzeFile(string path)
+    {
+        byte[] data = File.ReadAllBytes(path);
+        FileFeatures f = FeatureExtractor.Compute(data);
+        CultureInfo c = CultureInfo.InvariantCulture;
+
+        Console.WriteLine();
+        Write($"Ознаки файлу {Path.GetFileName(path)} ({data.Length} байт)", ConsoleColor.Cyan);
+        Console.WriteLine(string.Format(c, "  Ентропія байтів:          {0,6:F3} біт із 8    (0 = один байт повторюється, 8 = шум або стиснені дані)", f.Entropy));
+        Console.WriteLine(string.Format(c, "  Ентропія пар байтів:      {0,6:F3} біт із 16", f.BigramEntropy));
+        Console.WriteLine(string.Format(c, "  Друковані символи ASCII:  {0,6:P1}        (англійський текст і код близько 100%, кирилиця в UTF-8 менше)", f.PrintableAsciiFraction));
+        Console.WriteLine(string.Format(c, "  Середня довжина рядка:    {0,6:F1} символів", f.AverageLineLength));
+
+        IEnumerable<string> top = f.Histogram
+            .Select((p, b) => (p, b))
+            .Where(x => x.p > 0)
+            .OrderByDescending(x => x.p)
+            .Take(5)
+            .Select(x => string.Format(c, "{0} {1:P1}", ByteLabel((byte)x.b), x.p));
+        Console.WriteLine($"  Найчастіші байти:         {string.Join(", ", top)}");
+
+        string lags = string.Join(" ", f.Autocorrelation.Select(r => r.ToString("+0.00;-0.00; 0.00", c)));
+        Console.WriteLine($"  Автокореляція, лаги 1-16: {lags}");
+    }
+
+    private static string ByteLabel(byte b) => b switch
+    {
+        (byte)'\n' => "'\\n'",
+        (byte)'\r' => "'\\r'",
+        (byte)'\t' => "'\\t'",
+        (byte)' ' => "' '",
+        >= 0x21 and <= 0x7E => $"'{(char)b}'",
+        _ => $"0x{b:X2}",
+    };
 
     // ------------------------------------------------------------------
     // Демонстрація

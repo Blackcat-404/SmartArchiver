@@ -9,6 +9,7 @@
 | `src/SmartArchiver.Core` | спільні типи: коди помилок, `ArchiveException`, типи файлів | усі |
 | `src/SmartArchiver.Compression` | канонічний Гаффман (далі LZ77) | Стиснення |
 | `src/SmartArchiver.Security` | PBKDF2, AES-256-CTR, HMAC-SHA256 | Захист |
+| `src/SmartArchiver.Analysis` | аналіз файлу: ознаки вмісту, перцептрон | Аналіз файлу |
 | `src/SmartArchiver.Archive` | формат SARC: томи, таблиця файлів, блоки, захищений архів | Інтеграція |
 | `src/SmartArchiver.Data` | база даних результатів (EF Core + SQL Server) | База даних |
 | `src/SmartArchiver.Cli` | консольна програма `smartarchiver` | Інтеграція |
@@ -17,7 +18,7 @@
 | `docs/RUN.md` | меню й команди програми | |
 | `docs/decisions.md` | рішення команди: проблема → варіанти → рішення → чому | |
 
-Залежності йдуть в один бік: Compression залежить лише від Core, Security ні від кого, Archive — від Core і Security, CLI — від Archive і Data. Зони не посилаються одна на одну, тож поломка в одній не зупиняє збірку й тести інших.
+Залежності йдуть в один бік: Compression залежить лише від Core, Security і Analysis ні від кого, Archive — від Core і Security, CLI — від Analysis, Archive і Data. Зони не посилаються одна на одну, тож поломка в одній не зупиняє збірку й тести інших.
 
 Спільні налаштування всіх проєктів — у `Directory.Build.props`, версії пакетів — у `Directory.Packages.props` (у `.csproj` версій немає), версія SDK — у `global.json`.
 
