@@ -22,4 +22,10 @@ internal sealed class DisabledMeasurementStore : IMeasurementStore
     public void SaveRun(MeasurementRun run) => ArgumentNullException.ThrowIfNull(run);
 
     public int CountRuns() => 0;
+
+    public void SaveExperiment(Experiment experiment) => ArgumentNullException.ThrowIfNull(experiment);
+
+    public Experiment? GetExperiment(int id) => null;
+
+    public IReadOnlyList<Experiment> ListExperiments(ExperimentKind kind) => [];
 }

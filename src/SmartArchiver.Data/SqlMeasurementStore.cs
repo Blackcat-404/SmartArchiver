@@ -51,6 +51,41 @@ internal sealed class SqlMeasurementStore : IMeasurementStore
         return Execute(db => db.MeasurementRuns.Count());
     }
 
+    public void SaveExperiment(Experiment experiment)
+    {
+        ArgumentNullException.ThrowIfNull(experiment);
+        EnsureCreated();
+        // One SaveChanges is one transaction: if any result breaks a constraint, the experiment is not saved either.
+        Execute(db =>
+        {
+            db.Experiments.Add(experiment);
+            db.SaveChanges();
+        });
+    }
+
+    public Experiment? GetExperiment(int id)
+    {
+        EnsureCreated();
+        return Execute(db => db.Experiments
+            .AsNoTracking()
+            .Include(e => e.ParsingResults)
+            .Include(e => e.PackingResults)
+            .Include(e => e.TrainingRuns)
+            .AsSplitQuery()
+            .SingleOrDefault(e => e.Id == id));
+    }
+
+    public IReadOnlyList<Experiment> ListExperiments(ExperimentKind kind)
+    {
+        EnsureCreated();
+        return Execute(db => db.Experiments
+            .AsNoTracking()
+            .Where(e => e.Kind == kind)
+            .OrderBy(e => e.StartedAtUtc)
+            .ThenBy(e => e.Id)
+            .ToList());
+    }
+
     private void Execute(Action<SmartArchiverDbContext> action) =>
         Execute(db =>
         {

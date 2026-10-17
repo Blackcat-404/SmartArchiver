@@ -20,4 +20,13 @@ public interface IMeasurementStore
     void SaveRun(MeasurementRun run);
 
     int CountRuns();
+
+    /// <summary>Saves the experiment together with all its results in one transaction.</summary>
+    void SaveExperiment(Experiment experiment);
+
+    /// <summary>The experiment with all its results, or null if there is none with this id.</summary>
+    Experiment? GetExperiment(int id);
+
+    /// <summary>Experiments of one kind without their results, oldest first.</summary>
+    IReadOnlyList<Experiment> ListExperiments(ExperimentKind kind);
 }
