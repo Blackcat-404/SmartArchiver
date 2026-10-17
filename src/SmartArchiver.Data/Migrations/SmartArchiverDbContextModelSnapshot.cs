@@ -22,6 +22,51 @@ namespace SmartArchiver.Data.Migrations
 
             SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
 
+            modelBuilder.Entity("SmartArchiver.Data.Entities.Experiment", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("CommitHash")
+                        .HasMaxLength(40)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(40)");
+
+                    b.Property<string>("Dataset")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.Property<string>("ParametersJson")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<int?>("Seed")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("StartedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Kind", "StartedAtUtc");
+
+                    b.ToTable("Experiments", t =>
+                        {
+                            t.HasCheckConstraint("CK_Experiments_Dataset", "LEN([Dataset]) > 0");
+
+                            t.HasCheckConstraint("CK_Experiments_Kind", "[Kind] IN ('Parsing', 'Packing', 'Training')");
+                        });
+                });
+
             modelBuilder.Entity("SmartArchiver.Data.Entities.MeasurementFileResult", b =>
                 {
                     b.Property<int>("Id")
@@ -49,7 +94,12 @@ namespace SmartArchiver.Data.Migrations
 
                     b.HasIndex("RunId");
 
-                    b.ToTable("MeasurementFileResults");
+                    b.ToTable("MeasurementFileResults", t =>
+                        {
+                            t.HasCheckConstraint("CK_MeasurementFileResults_Group", "[Group] <= 6");
+
+                            t.HasCheckConstraint("CK_MeasurementFileResults_Sizes", "[OriginalBytes] >= 0 AND [ArchiveBytes] >= 0");
+                        });
                 });
 
             modelBuilder.Entity("SmartArchiver.Data.Entities.MeasurementRun", b =>
@@ -106,7 +156,165 @@ namespace SmartArchiver.Data.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("MeasurementRuns");
+                    b.ToTable("MeasurementRuns", t =>
+                        {
+                            t.HasCheckConstraint("CK_MeasurementRuns_Q", "[Q] >= 0");
+
+                            t.HasCheckConstraint("CK_MeasurementRuns_Sizes", "[OriginalBytes] >= 0 AND [ArchiveBytes] >= 0");
+
+                            t.HasCheckConstraint("CK_MeasurementRuns_Time", "[ElapsedSeconds] >= 0 AND [TRefSeconds] > 0");
+
+                            t.HasCheckConstraint("CK_MeasurementRuns_Weights", "[Alpha] >= 0 AND [Beta] >= 0");
+                        });
+                });
+
+            modelBuilder.Entity("SmartArchiver.Data.Entities.PackingResult", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<int>("BlockCount")
+                        .HasColumnType("int");
+
+                    b.Property<long>("CapacityBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<double>("ElapsedSeconds")
+                        .HasColumnType("float");
+
+                    b.Property<int>("ExperimentId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Method")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.Property<double>("TotalValue")
+                        .HasColumnType("float");
+
+                    b.Property<long>("UsedBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<int>("VolumeIndex")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExperimentId");
+
+                    b.ToTable("PackingResults", t =>
+                        {
+                            t.HasCheckConstraint("CK_PackingResults_Capacity", "[UsedBytes] >= 0 AND [UsedBytes] <= [CapacityBytes]");
+
+                            t.HasCheckConstraint("CK_PackingResults_Method", "[Method] IN ('Dp', 'Greedy')");
+
+                            t.HasCheckConstraint("CK_PackingResults_Value", "[TotalValue] >= 0 AND [ElapsedSeconds] >= 0");
+
+                            t.HasCheckConstraint("CK_PackingResults_Volume", "[VolumeIndex] >= 0 AND [BlockCount] >= 0");
+                        });
+                });
+
+            modelBuilder.Entity("SmartArchiver.Data.Entities.ParsingResult", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<double>("ElapsedSeconds")
+                        .HasColumnType("float");
+
+                    b.Property<long>("EncodedBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<int>("ExperimentId")
+                        .HasColumnType("int");
+
+                    b.Property<byte>("Group")
+                        .HasColumnType("tinyint");
+
+                    b.Property<string>("Method")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.Property<long>("OriginalBytes")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExperimentId");
+
+                    b.ToTable("ParsingResults", t =>
+                        {
+                            t.HasCheckConstraint("CK_ParsingResults_Group", "[Group] <= 6");
+
+                            t.HasCheckConstraint("CK_ParsingResults_Method", "[Method] IN ('Greedy', 'Lazy', 'Dp')");
+
+                            t.HasCheckConstraint("CK_ParsingResults_Sizes", "[OriginalBytes] >= 0 AND [EncodedBytes] >= 0");
+
+                            t.HasCheckConstraint("CK_ParsingResults_Time", "[ElapsedSeconds] >= 0");
+                        });
+                });
+
+            modelBuilder.Entity("SmartArchiver.Data.Entities.TrainingRun", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("ConfusionMatrixJson")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<int>("Epochs")
+                        .HasColumnType("int");
+
+                    b.Property<int>("ExperimentId")
+                        .HasColumnType("int");
+
+                    b.Property<int>("InitSeed")
+                        .HasColumnType("int");
+
+                    b.Property<bool>("IsSelected")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("LayerSizes")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(200)");
+
+                    b.Property<double>("LearningRate")
+                        .HasColumnType("float");
+
+                    b.Property<double>("TrainLoss")
+                        .HasColumnType("float");
+
+                    b.Property<double>("TrainMacroF1")
+                        .HasColumnType("float");
+
+                    b.Property<double>("ValidMacroF1")
+                        .HasColumnType("float");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExperimentId");
+
+                    b.ToTable("TrainingRuns", t =>
+                        {
+                            t.HasCheckConstraint("CK_TrainingRuns_LayerSizes", "LEN([LayerSizes]) > 0");
+
+                            t.HasCheckConstraint("CK_TrainingRuns_MacroF1", "[TrainMacroF1] BETWEEN 0 AND 1 AND [ValidMacroF1] BETWEEN 0 AND 1");
+
+                            t.HasCheckConstraint("CK_TrainingRuns_Training", "[Epochs] > 0 AND [LearningRate] > 0 AND [TrainLoss] >= 0");
+                        });
                 });
 
             modelBuilder.Entity("SmartArchiver.Data.Entities.MeasurementFileResult", b =>
@@ -118,6 +326,48 @@ namespace SmartArchiver.Data.Migrations
                         .IsRequired();
 
                     b.Navigation("Run");
+                });
+
+            modelBuilder.Entity("SmartArchiver.Data.Entities.PackingResult", b =>
+                {
+                    b.HasOne("SmartArchiver.Data.Entities.Experiment", "Experiment")
+                        .WithMany("PackingResults")
+                        .HasForeignKey("ExperimentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Experiment");
+                });
+
+            modelBuilder.Entity("SmartArchiver.Data.Entities.ParsingResult", b =>
+                {
+                    b.HasOne("SmartArchiver.Data.Entities.Experiment", "Experiment")
+                        .WithMany("ParsingResults")
+                        .HasForeignKey("ExperimentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Experiment");
+                });
+
+            modelBuilder.Entity("SmartArchiver.Data.Entities.TrainingRun", b =>
+                {
+                    b.HasOne("SmartArchiver.Data.Entities.Experiment", "Experiment")
+                        .WithMany("TrainingRuns")
+                        .HasForeignKey("ExperimentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Experiment");
+                });
+
+            modelBuilder.Entity("SmartArchiver.Data.Entities.Experiment", b =>
+                {
+                    b.Navigation("PackingResults");
+
+                    b.Navigation("ParsingResults");
+
+                    b.Navigation("TrainingRuns");
                 });
 
             modelBuilder.Entity("SmartArchiver.Data.Entities.MeasurementRun", b =>
