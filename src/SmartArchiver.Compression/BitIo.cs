@@ -92,13 +92,23 @@ internal ref struct BitReader
         return (_current >> _left) & 1;
     }
 
+    public uint ReadBits(int count)
+    {
+        uint value = 0;
+        for (int i = 0; i < count; i++)
+            value = (value << 1) | (uint)ReadBit();
+        return value;
+    }
     /// <summary>
     /// Перевіряє, що після даних залишилися лише нульові біти доповнення і жодного зайвого байта.
     /// </summary>
     public readonly void EnsureOnlyPaddingLeft()
     {
+        if (_next != _data.Length)
+            throw new ArchiveException(ErrorCode.E_PAYLOAD, "Зайві байти після потоку.");
+
         int padMask = _left == 0 ? 0 : (1 << _left) - 1;
-        if ((_current & padMask) != 0 || _next != _data.Length)
-            throw new ArchiveException(ErrorCode.E_PAYLOAD, "Зайві біти або байти після даних.");
+        if ((_current & padMask) != 0)
+            throw new ArchiveException(ErrorCode.E_CODE, "Ненульове доповнення.");
     }
 }

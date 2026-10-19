@@ -3,19 +3,16 @@ namespace SmartArchiver.Compression;
 /// <summary>
 /// Побудова довжин кодів Гаффмана з частот. Довжини обмежені 15 бітами, бо формат архіву
 /// не дозволяє використовувати більші коди без втрати сумісності.
-/// Автор: Артем.
+/// Розмір алфавіту довільний: 257 для LIT, 256 для LEN, 16 для DIST.
 /// </summary>
 internal static class HuffmanLengths
 {
     /// <summary>
-    /// Вибудовує масив довжин коду для 256 символів на основі частот зустрічань.
+    /// Вибудовує масив довжин коду для символів на основі частот зустрічань.
     /// Якщо побудований код перевищує ліміт 15 біт, частоти «вирівнюються» і процедура повторюється.
     /// </summary>
     public static byte[] Build(long[] freq)
     {
-        if (freq.Length != HuffmanCodec.TableSize)
-            throw new ArgumentException($"Очікується {HuffmanCodec.TableSize} частот.", nameof(freq));
-
         long[] work = (long[])freq.Clone();
         while (true)
         {
@@ -37,7 +34,7 @@ internal static class HuffmanLengths
     }
 
     /// <summary>
-    /// Будує дерева Гаффмана без обмеження довжини, але з детермінованим порядком для однакових ваг.
+    /// Будує дерево Гаффмана без обмеження довжини, але з детермінованим порядком для однакових ваг.
     /// </summary>
     private static byte[] BuildUnlimited(long[] freq)
     {

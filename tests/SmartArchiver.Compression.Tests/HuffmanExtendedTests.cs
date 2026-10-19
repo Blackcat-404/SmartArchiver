@@ -1,4 +1,5 @@
 using System.Text;
+using SmartArchiver.Archive;
 using SmartArchiver.Core;
 
 namespace SmartArchiver.Compression.Tests;
@@ -249,4 +250,40 @@ public class HuffmanExtendedTests
             }
         }
     }
+    [Fact]
+public void Ref01_Lz77Block_DecodesTo480BytesOfHelloWorld()
+{
+    // Закодований блок з FORMAT_SPEC_P2, розділ 8.
+    // 57 байтів: три таблиці, token_count=14, stream_len=7, потік 7 байтів.
+    byte[] block = Convert.FromHexString(
+        // LIT: nsym=9
+        "0009" +
+        "0020" + "03" +   // ' ' = 3
+        "0064" + "04" +   // 'd' = 4
+        "0065" + "04" +   // 'e' = 4
+        "0068" + "04" +   // 'h' = 4
+        "006C" + "02" +   // 'l' = 2
+        "006F" + "03" +   // 'o' = 3
+        "0072" + "04" +   // 'r' = 4
+        "0077" + "03" +   // 'w' = 3
+        "0100" + "03" +   // 256 = 3
+        // LEN: nsym=2
+        "0002" +
+        "00CF" + "01" +   // 207 = 1
+        "00FF" + "01" +   // 255 = 1
+        // DIST: nsym=1
+        "0001" +
+        "0004" + "01" +   // 4 = 1
+        // token_count=14, stream_len=7
+        "0000000E" + "00000007" +
+        // потік
+        "ED06A3F3159D18"
+    );
+
+    byte[] result = Lz77BlockDecoder.Decode(block, 480);
+
+    Assert.Equal(480, result.Length);
+    Assert.Equal(0x70208846u, Crc32.Compute(result));
+    Assert.Equal("hello world ", System.Text.Encoding.ASCII.GetString(result.AsSpan(0, 12)));
+}
 }
