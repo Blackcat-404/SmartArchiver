@@ -32,6 +32,30 @@ public class BuiltInModelTests
     }
 
     [Fact]
+    public void BuiltInPredictor_IsDeterministicSoftsignNetwork()
+    {
+        BytePredictor predictor = BytePredictor.BuiltIn;
+
+        Assert.Equal(HiddenActivation.Softsign, predictor.Network.Activation);
+        Assert.Equal(PredictorOptions.Default.ContextBytes, predictor.ContextBytes);
+        Assert.Equal(256, predictor.Network.LayerSizes[^1]);
+    }
+
+    [Fact]
+    public void BuiltInPredictor_RestoresEveryValidFileOfTheDataset()
+    {
+        (_, IReadOnlyList<LabeledFile> valid) = LabeledDataset.SplitFiles(LabeledDataset.ListFiles(DatasetFolder()));
+        BytePredictor predictor = BytePredictor.BuiltIn;
+
+        Assert.Equal(7, valid.Count);
+        foreach (LabeledFile file in valid)
+        {
+            byte[] data = File.ReadAllBytes(file.FullPath);
+            Assert.Equal(data, predictor.Decode(predictor.Encode(data)));
+        }
+    }
+
+    [Fact]
     public void DefaultAnalyzer_UsesBuiltInModel()
     {
         FileAnalysis analysis = new FileAnalyzer().Analyze(File.ReadAllBytes(Path.Combine(DatasetFolder(), "5", "noise.png")));

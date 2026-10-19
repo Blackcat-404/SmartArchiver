@@ -8,6 +8,8 @@
   <ItemGroup>
     <!-- Trained by "smartarchiver train-classifier Datasets src/SmartArchiver.Analysis/Model/classifier.json". -->
     <EmbeddedResource Include="Model\classifier.json" LogicalName="SmartArchiver.Analysis.classifier.json" />
+    <!-- Trained by "smartarchiver train-predictor Datasets src/SmartArchiver.Analysis/Model/predictor.json". -->
+    <EmbeddedResource Include="Model\predictor.json" LogicalName="SmartArchiver.Analysis.predictor.json" />
   </ItemGroup>
 
 </Project>

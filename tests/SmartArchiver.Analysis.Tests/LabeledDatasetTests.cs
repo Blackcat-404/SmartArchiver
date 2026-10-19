@@ -108,6 +108,23 @@ public sealed class LabeledDatasetTests : IDisposable
     }
 
     [Fact]
+    public void SplitFiles_UsesTheSameRuleAsSplitByFile()
+    {
+        foreach (string group in new[] { "0", "5" })
+        {
+            foreach (string name in new[] { "a", "b", "c", "d", "e" })
+                AddFile(group, name + ".bin", 2500);
+        }
+
+        DatasetSplit pieces = LabeledDataset.SplitByFile(LabeledDataset.Load(root, chunkSize: 1000, maxChunksPerFile: 10));
+        (IReadOnlyList<LabeledFile> train, IReadOnlyList<LabeledFile> valid) = LabeledDataset.SplitFiles(LabeledDataset.ListFiles(root));
+
+        Assert.Equal(pieces.Valid.Select(s => s.Source).Distinct().Order(), valid.Select(f => f.Source).Order());
+        Assert.Equal(pieces.Train.Select(s => s.Source).Distinct().Order(), train.Select(f => f.Source).Order());
+        Assert.All(valid.Concat(train), f => Assert.True(File.Exists(f.FullPath)));
+    }
+
+    [Fact]
     public void SplitByFile_GroupWithOneFile_StaysInTrain()
     {
         AddFile("4", "only.bin", 2000);
