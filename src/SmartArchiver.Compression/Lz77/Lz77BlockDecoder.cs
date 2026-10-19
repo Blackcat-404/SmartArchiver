@@ -10,7 +10,6 @@ internal static class Lz77BlockDecoder
     public const int LenAlphabetSize = 256;  // 0…255
     public const int DistAlphabetSize = 16;   // 0…15
     public const int MatchMarker = 256;
-    private const int MinMatch = 3;
 
     public static byte[] Decode(ReadOnlySpan<byte> coded, int rawLength)
     {
@@ -34,7 +33,8 @@ internal static class Lz77BlockDecoder
                                  coded[pos + 6] << 8 | coded[pos + 7]);
         pos += 8;
 
-        if (pos + (int)streamLen != coded.Length)
+        // Перевіряємо довжину без ризику переповнення int.
+        if (streamLen != (uint)(coded.Length - pos))
             throw new ArchiveException(ErrorCode.E_PAYLOAD,
                 "stream_len не збігається з реальним розміром даних.");
 
@@ -53,6 +53,11 @@ internal static class Lz77BlockDecoder
 
             if (litSym != MatchMarker)
             {
+                // Перевіряємо, чи не перевищено очікуваний розмір блока.
+                if (output.Count >= rawLength)
+                    throw new ArchiveException(ErrorCode.E_PAYLOAD,
+                        "Кількість відновлених байтів перевищує raw_len.");
+
                 output.Add((byte)litSym);
                 continue;
             }
@@ -65,12 +70,18 @@ internal static class Lz77BlockDecoder
             int distSym = distDecoder.ReadSymbol(ref reader);
             int distance = DecodeDistance(ref reader, distSym);
 
-            // Перевірка меж. E_CODE за специфікацією розділу 5.
+            // Перевіряємо, чи не виходить посилання за межі відновлених даних.
             if (distance > output.Count)
                 throw new ArchiveException(ErrorCode.E_CODE,
                     "Посилання виходить за межі відновленого буфера.");
 
-            AppendMatch(output, distance, length);
+            // Перевіряємо, чи не перевищить збіг очікуваний розмір блока.
+            if (length > rawLength - output.Count)
+                throw new ArchiveException(ErrorCode.E_PAYLOAD,
+                    "Довжина збігу перевищує межі вихідного блока.");
+
+            // Використовуємо спільний метод копіювання LZ77 з перевірками.
+            Lz77Decoder.AppendMatch(output, distance, length);
         }
 
         reader.EnsureOnlyPaddingLeft();
@@ -93,11 +104,4 @@ internal static class Lz77BlockDecoder
         return (int)(((1u << (code - 1)) | extraBits) + 1);
     }
 
-    // Побайтове копіювання (обов'язково: distance може бути менше length).
-    private static void AppendMatch(List<byte> output, int distance, int length)
-    {
-        int start = output.Count - distance;
-        for (int i = 0; i < length; i++)
-            output.Add(output[start + i]);
-    }
 }

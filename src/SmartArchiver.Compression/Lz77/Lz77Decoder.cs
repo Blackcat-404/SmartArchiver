@@ -2,9 +2,9 @@ namespace SmartArchiver.Compression;
 
 internal static class Lz77Decoder
 {
-    public const int MinMatch = 3;
-    public const int MaxMatch = 258;
-    public const int Window = 32768;
+    public const int MinMatch = Lz77Limits.MinMatch;
+    public const int MaxMatch = Lz77Limits.MaxMatch;
+    public const int Window = Lz77Limits.Window;
 
     public static byte[] Decode(IEnumerable<Lz77Token> tokens)
     {
