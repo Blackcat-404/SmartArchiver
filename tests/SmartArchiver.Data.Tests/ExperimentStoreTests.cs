@@ -61,6 +61,22 @@ public class ExperimentStoreTests
     }
 
     [DatabaseFact]
+    public void SaveExperiment_Prediction_IsReadBackUnchanged()
+    {
+        using var database = new TestDatabase();
+        var store = MeasurementStore.Open(database.ConnectionString);
+        Experiment prediction = PredictionExperiment();
+
+        store.SaveExperiment(prediction);
+
+        Assert.Equal(
+            prediction.PredictionResults.Select(r => (r.Group, r.OriginalBytes, r.OriginalEntropy, r.ResidualEntropy,
+                r.EncodedBytes, r.PredictedEncodedBytes, r.ElapsedSeconds)),
+            store.GetExperiment(prediction.Id)!.PredictionResults.OrderBy(r => r.Id).Select(r => (r.Group, r.OriginalBytes,
+                r.OriginalEntropy, r.ResidualEntropy, r.EncodedBytes, r.PredictedEncodedBytes, r.ElapsedSeconds)));
+    }
+
+    [DatabaseFact]
     public void ListExperiments_ReturnsOnlyThatKind_OldestFirst()
     {
         using var database = new TestDatabase();
@@ -122,6 +138,9 @@ public class ExperimentStoreTests
     [InlineData("training zero epochs")]
     [InlineData("training zero learning rate")]
     [InlineData("experiment empty dataset")]
+    [InlineData("prediction group above 6")]
+    [InlineData("prediction entropy above 8")]
+    [InlineData("prediction negative size")]
     public void SaveExperiment_ValueOutsideConstraint_IsRejected(string violation)
     {
         using var database = new TestDatabase();
@@ -136,6 +155,9 @@ public class ExperimentStoreTests
             "training zero epochs" => With(TrainingExperiment(), e => e.TrainingRuns[0].Epochs = 0),
             "training zero learning rate" => With(TrainingExperiment(), e => e.TrainingRuns[0].LearningRate = 0),
             "experiment empty dataset" => With(TrainingExperiment(), e => e.Dataset = ""),
+            "prediction group above 6" => With(PredictionExperiment(), e => e.PredictionResults[0].Group = 7),
+            "prediction entropy above 8" => With(PredictionExperiment(), e => e.PredictionResults[0].ResidualEntropy = 8.5),
+            "prediction negative size" => With(PredictionExperiment(), e => e.PredictionResults[0].PredictedEncodedBytes = -1),
             _ => throw new ArgumentOutOfRangeException(nameof(violation)),
         };
 
@@ -212,6 +234,17 @@ public class ExperimentStoreTests
         [
             new() { Method = PackingMethod.Dp, VolumeIndex = 0, CapacityBytes = 65_000, UsedBytes = 64_950, TotalValue = 37.5, BlockCount = 12, ElapsedSeconds = 0.8 },
             new() { Method = PackingMethod.Greedy, VolumeIndex = 0, CapacityBytes = 65_000, UsedBytes = 61_200, TotalValue = 33, BlockCount = 11, ElapsedSeconds = 0.01 },
+        ];
+        return e;
+    }
+
+    private static Experiment PredictionExperiment()
+    {
+        Experiment e = NewExperiment(ExperimentKind.Prediction);
+        e.PredictionResults =
+        [
+            new() { Group = 0, OriginalBytes = 40_000, OriginalEntropy = 4.7, ResidualEntropy = 3.9, EncodedBytes = 16_000, PredictedEncodedBytes = 15_200, ElapsedSeconds = 0.3 },
+            new() { Group = 5, OriginalBytes = 18_000, OriginalEntropy = 7.99, ResidualEntropy = 7.99, EncodedBytes = 18_000, PredictedEncodedBytes = 18_008, ElapsedSeconds = 0.2 },
         ];
         return e;
     }

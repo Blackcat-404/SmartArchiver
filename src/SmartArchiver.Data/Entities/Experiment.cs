@@ -11,6 +11,9 @@ public enum ExperimentKind
 
     /// <summary>Training the file type classifier.</summary>
     Training,
+
+    /// <summary>Next-byte prediction: entropy and compressed size of residuals against the original.</summary>
+    Prediction,
 }
 
 /// <summary>
@@ -39,4 +42,6 @@ public sealed class Experiment
     public List<PackingResult> PackingResults { get; set; } = [];
 
     public List<TrainingRun> TrainingRuns { get; set; } = [];
+
+    public List<PredictionResult> PredictionResults { get; set; } = [];
 }

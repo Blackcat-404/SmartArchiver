@@ -25,6 +25,8 @@ public sealed class SmartArchiverDbContext(DbContextOptions<SmartArchiverDbConte
 
     public DbSet<TrainingRun> TrainingRuns => Set<TrainingRun>();
 
+    public DbSet<PredictionResult> PredictionResults => Set<PredictionResult>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<MeasurementRun>(run =>
@@ -61,6 +63,8 @@ public sealed class SmartArchiverDbContext(DbContextOptions<SmartArchiverDbConte
             experiment.HasMany(e => e.PackingResults).WithOne(r => r.Experiment)
                 .HasForeignKey(r => r.ExperimentId).OnDelete(DeleteBehavior.Cascade);
             experiment.HasMany(e => e.TrainingRuns).WithOne(r => r.Experiment)
+                .HasForeignKey(r => r.ExperimentId).OnDelete(DeleteBehavior.Cascade);
+            experiment.HasMany(e => e.PredictionResults).WithOne(r => r.Experiment)
                 .HasForeignKey(r => r.ExperimentId).OnDelete(DeleteBehavior.Cascade);
             experiment.ToTable(t =>
             {
@@ -104,7 +108,19 @@ public sealed class SmartArchiverDbContext(DbContextOptions<SmartArchiverDbConte
                 t.HasCheckConstraint("CK_TrainingRuns_LayerSizes", "LEN([LayerSizes]) > 0");
             });
         });
+
+        modelBuilder.Entity<PredictionResult>(ConfigurePrediction);
     }
+
+    private static void ConfigurePrediction(EntityTypeBuilder<PredictionResult> result) => result.ToTable(t =>
+    {
+        t.HasCheckConstraint("CK_PredictionResults_Group", $"[Group] <= {MaxFileType}");
+        t.HasCheckConstraint("CK_PredictionResults_Sizes",
+            "[OriginalBytes] >= 0 AND [EncodedBytes] >= 0 AND [PredictedEncodedBytes] >= 0");
+        t.HasCheckConstraint("CK_PredictionResults_Entropy",
+            "[OriginalEntropy] BETWEEN 0 AND 8 AND [ResidualEntropy] BETWEEN 0 AND 8");
+        t.HasCheckConstraint("CK_PredictionResults_Time", "[ElapsedSeconds] >= 0");
+    });
 
     /// <summary>CHECK that an enum stored as text holds one of its names; built from the enum so they cannot drift apart.</summary>
     private static string OneOf<TEnum>(string column) where TEnum : struct, Enum =>

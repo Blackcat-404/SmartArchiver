@@ -63,7 +63,7 @@ namespace SmartArchiver.Data.Migrations
                         {
                             t.HasCheckConstraint("CK_Experiments_Dataset", "LEN([Dataset]) > 0");
 
-                            t.HasCheckConstraint("CK_Experiments_Kind", "[Kind] IN ('Parsing', 'Packing', 'Training')");
+                            t.HasCheckConstraint("CK_Experiments_Kind", "[Kind] IN ('Parsing', 'Packing', 'Training', 'Prediction')");
                         });
                 });
 
@@ -262,6 +262,54 @@ namespace SmartArchiver.Data.Migrations
                         });
                 });
 
+            modelBuilder.Entity("SmartArchiver.Data.Entities.PredictionResult", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<double>("ElapsedSeconds")
+                        .HasColumnType("float");
+
+                    b.Property<long>("EncodedBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<int>("ExperimentId")
+                        .HasColumnType("int");
+
+                    b.Property<byte>("Group")
+                        .HasColumnType("tinyint");
+
+                    b.Property<long>("OriginalBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<double>("OriginalEntropy")
+                        .HasColumnType("float");
+
+                    b.Property<long>("PredictedEncodedBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<double>("ResidualEntropy")
+                        .HasColumnType("float");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExperimentId");
+
+                    b.ToTable("PredictionResults", t =>
+                        {
+                            t.HasCheckConstraint("CK_PredictionResults_Entropy", "[OriginalEntropy] BETWEEN 0 AND 8 AND [ResidualEntropy] BETWEEN 0 AND 8");
+
+                            t.HasCheckConstraint("CK_PredictionResults_Group", "[Group] <= 6");
+
+                            t.HasCheckConstraint("CK_PredictionResults_Sizes", "[OriginalBytes] >= 0 AND [EncodedBytes] >= 0 AND [PredictedEncodedBytes] >= 0");
+
+                            t.HasCheckConstraint("CK_PredictionResults_Time", "[ElapsedSeconds] >= 0");
+                        });
+                });
+
             modelBuilder.Entity("SmartArchiver.Data.Entities.TrainingRun", b =>
                 {
                     b.Property<int>("Id")
@@ -350,6 +398,17 @@ namespace SmartArchiver.Data.Migrations
                     b.Navigation("Experiment");
                 });
 
+            modelBuilder.Entity("SmartArchiver.Data.Entities.PredictionResult", b =>
+                {
+                    b.HasOne("SmartArchiver.Data.Entities.Experiment", "Experiment")
+                        .WithMany("PredictionResults")
+                        .HasForeignKey("ExperimentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Experiment");
+                });
+
             modelBuilder.Entity("SmartArchiver.Data.Entities.TrainingRun", b =>
                 {
                     b.HasOne("SmartArchiver.Data.Entities.Experiment", "Experiment")
@@ -366,6 +425,8 @@ namespace SmartArchiver.Data.Migrations
                     b.Navigation("PackingResults");
 
                     b.Navigation("ParsingResults");
+
+                    b.Navigation("PredictionResults");
 
                     b.Navigation("TrainingRuns");
                 });
