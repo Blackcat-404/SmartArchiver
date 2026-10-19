@@ -885,3 +885,85 @@ private static CompressionStrategy ChooseStrategy(FileKind kind, FileFeatures fe
     return CompressionStrategy.Lz77Huffman;
 }
 ```
+
+## 8. Передбачення наступного байта з кодуванням залишків
+
+**Промпт:**
+
+> Для просунутого рівня треба, щоб перцептрон за k попередніми байтами передбачав наступний, а кодувався залишок за модулем 256. Ваги мають записуватися в архів або мережа має бути детермінована, інакше не розпакувати. Як це влаштувати, щоб розпакування гарантовано повторило прогноз, що робити з вагами і як перевірити, де прогноз допомагає? Дай приклади коду.
+
+**Відповідь:**
+
+**Схема.** Для кожної позиції мережа отримує k попередніх байтів і видає прогноз `p`. Записується `r = (x − p) mod 256`. Розпакування йде зліва направо: має вже відновлені попередні байти, рахує той самий `p` і відновлює `x = (r + p) mod 256`. Якщо прогноз часто правильний, залишки здебільшого нулі, їхня ентропія менша, і наступне стиснення (LZ77 + Гаффман) працює краще.
+
+**Вхід і вихід.** Байт — це категорія, а не число, тому зручно подавати кожен попередній байт як one-hot (256 входів на байт), а на виході мати 256 класів. Прогноз — клас із найбільшим виходом; для цього softmax не потрібен, досить порівняти значення до нього.
+
+**Детермінованість.** Найнебезпечніше місце: прогноз при розпакуванні має збігтися до біта. Функції на кшталт `Math.Exp` і `Math.Tanh` можуть давати різний останній знак на різних ОС, і тоді архів, створений на Windows, не розпакується на Linux. Безпечно використовувати лише арифметику, яку IEEE 754 гарантує однаково скрізь: додавання, множення, ділення, модуль. Тому в прихованому шарі краще softsign `x / (1 + |x|)` замість tanh, а прогноз брати до softmax.
+
+**Ваги.** Записувати ваги в кожен архів дорого: навіть невелика мережа — десятки тисяч чисел, тобто сотні кілобайтів, що більше за багато файлів. Альтернатива з умови — детермінована мережа: одна модель, навчена заздалегідь і однакова в пакувальника й розпаковувача. Щоб розпаковувач з іншими вагами не видав мовчки сміття, на початок закодованих даних варто записати ідентифікатор моделі (наприклад, перші 8 байтів SHA-256 від усіх ваг) і перевіряти його.
+
+**Перевірка.** Обов'язково: новий об'єкт, завантажений лише з файлу ваг, відновлює дані із залишків побайтово. І чесне вимірювання на файлах, яких модель не бачила: ентропія й розмір після стиснення для самого файлу і для залишків, по групах. Прогноз не зобов'язаний допомагати скрізь: для вже стиснених даних — ні, а для символьних даних залишок від одного найімовірнішого символу може навіть збільшити ентропію, бо помилки дають довільні різниці кодів.
+
+Приклад прогнозу: прихований шар рахується лише за активними входами one-hot, softsign, вибір найбільшого виходу.
+
+```csharp
+/// <summary>The guess for the byte that follows <paramref name="history"/>; only its last k bytes matter.</summary>
+public byte Predict(ReadOnlySpan<byte> history)
+{
+    // Hidden layer: the input is one-hot, so each neuron adds its bias and the weights of the k active inputs.
+    Span<double> h = hidden <= 256 ? stackalloc double[hidden] : new double[hidden];
+    int inputs = 256 * ContextBytes;
+    for (int j = 0; j < hidden; j++)
+    {
+        double sum = hiddenBiases[j];
+        for (int back = 0; back < ContextBytes && back < history.Length; back++)
+            sum += hiddenWeights[j * inputs + back * 256 + history[history.Length - 1 - back]];
+        h[j] = sum / (1 + Math.Abs(sum));
+    }
+
+    int best = 0;
+    double bestValue = double.NegativeInfinity;
+    for (int o = 0; o < 256; o++)
+    {
+        double sum = outputBiases[o];
+        for (int j = 0; j < hidden; j++)
+            sum += outputWeights[o * hidden + j] * h[j];
+        if (sum > bestValue)
+        {
+            bestValue = sum;
+            best = o;
+        }
+    }
+    return (byte)best;
+}
+```
+
+Приклад кодування і розкодування залишків з перевіркою моделі.
+
+```csharp
+/// <summary>Model id (8 bytes, big-endian), then one residual per byte.</summary>
+public byte[] Encode(ReadOnlySpan<byte> data)
+{
+    var encoded = new byte[ModelIdSize + data.Length];
+    BinaryPrimitives.WriteUInt64BigEndian(encoded, ModelId);
+    for (int i = 0; i < data.Length; i++)
+        encoded[ModelIdSize + i] = (byte)(data[i] - Predict(data[..i]));
+    return encoded;
+}
+
+/// <exception cref="InvalidDataException">The data is too short or was encoded with another model.</exception>
+public byte[] Decode(ReadOnlySpan<byte> encoded)
+{
+    if (encoded.Length < ModelIdSize)
+        throw new InvalidDataException("Predicted data is shorter than the model id.");
+    ulong id = BinaryPrimitives.ReadUInt64BigEndian(encoded);
+    if (id != ModelId)
+        throw new InvalidDataException($"Data was encoded with predictor model {id:X16}, this one is {ModelId:X16}.");
+
+    ReadOnlySpan<byte> residuals = encoded[ModelIdSize..];
+    var data = new byte[residuals.Length];
+    for (int i = 0; i < data.Length; i++)
+        data[i] = (byte)(residuals[i] + Predict(data.AsSpan(0, i)));
+    return data;
+}
+```
