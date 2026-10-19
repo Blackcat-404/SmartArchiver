@@ -70,6 +70,12 @@ internal static class ConsoleApp
             case "train-classifier" when args.Length <= 3:
                 TrainClassifier(args.Length > 1 ? args[1] : "Datasets", args.Length > 2 ? args[2] : "classifier.json");
                 return 0;
+            case "train-predictor" when args.Length <= 3:
+                TrainPredictor(args.Length > 1 ? args[1] : "Datasets", args.Length > 2 ? args[2] : "predictor.json");
+                return 0;
+            case "prediction-experiment" when args.Length <= 2:
+                RunPredictionExperiment(args.Length > 1 ? args[1] : "Datasets");
+                return 0;
             case "experiment" when args.Length == 2:
                 RunParsingComparison(args[1]);
                 return 0;
@@ -83,6 +89,8 @@ internal static class ConsoleApp
                 Console.WriteLine("  smartarchiver db                            стан бази даних (створює її, якщо ще немає)");
                 Console.WriteLine("  smartarchiver analyze <файл>                ознаки, тип файлу і стратегія стиснення");
                 Console.WriteLine("  smartarchiver train-classifier [датасет] [модель.json]  навчити класифікатор (за замовчуванням Datasets)");
+                Console.WriteLine("  smartarchiver train-predictor [датасет] [модель.json]   навчити передбачення наступного байта");
+                Console.WriteLine("  smartarchiver prediction-experiment [датасет]          вплив передбачення на ентропію і розмір");
                 Console.WriteLine("  smartarchiver experiment <тека>            порівняти Greedy та Lazy на Datasets");
                 return 1;
         }
@@ -273,6 +281,7 @@ internal static class ConsoleApp
             Write("========== Експерименти ==========", ConsoleColor.Cyan);
             Console.WriteLine("  1) Порівняти Greedy та Lazy LZ77");
             Console.WriteLine("  2) Навчити класифікатор типу файлу");
+            Console.WriteLine("  3) Вплив передбачення наступного байта");
             Console.WriteLine("  0) Повернутися до головного меню");
 
             string? choice = Prompt("Ваш вибір");
@@ -284,11 +293,14 @@ internal static class ConsoleApp
                 case "2":
                     Guard(TrainClassifierInteractive);
                     break;
+                case "3":
+                    Guard(PredictionExperimentInteractive);
+                    break;
                 case "0":
                 case null:
                     return;
                 default:
-                    Write("Невідомий пункт. Введіть 0, 1 або 2.", ConsoleColor.Yellow);
+                    Write("Невідомий пункт. Введіть число від 0 до 3.", ConsoleColor.Yellow);
                     break;
             }
         }
@@ -524,6 +536,102 @@ internal static class ConsoleApp
         CompressionStrategy.Lz77Huffman => "LZ77 + Гаффман",
         _ => strategy.ToString(),
     };
+
+    private static void PredictionExperimentInteractive()
+    {
+        string? dataset = Prompt("Каталог із групами 0..6", "Datasets");
+        if (dataset is null)
+            return;
+        RunPredictionExperiment(dataset);
+    }
+
+    /// <summary>Навчає передбачення наступного байта на train-файлах датасету і зберігає модель.</summary>
+    private static void TrainPredictor(string datasetPath, string modelPath)
+    {
+        (IReadOnlyList<LabeledFile> train, _) = LabeledDataset.SplitFiles(LabeledDataset.ListFiles(datasetPath));
+        PredictorOptions options = PredictorOptions.Default;
+
+        Console.WriteLine();
+        Write($"Навчання передбачення: {train.Count} файлів, до {options.MaxPositionsPerSample} позицій з кожного", ConsoleColor.Cyan);
+        Console.WriteLine($"  Контекст {options.ContextBytes} байти, мережа {256 * options.ContextBytes}-{options.HiddenNeurons}-256 (softsign), епох {options.Epochs}, швидкість {options.LearningRate.ToString(CultureInfo.InvariantCulture)}, seed {options.Seed}");
+
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        BytePredictor predictor = BytePredictor.Train([.. train.Select(f => (ReadOnlyMemory<byte>)File.ReadAllBytes(f.FullPath))], options);
+        using (FileStream file = File.Create(modelPath))
+            predictor.Save(file);
+
+        Write($"[OK] Модель {predictor.ModelId:X16} збережено за {watch.Elapsed.TotalSeconds:F1} с: {Path.GetFullPath(modelPath)}", ConsoleColor.Green);
+    }
+
+    /// <summary>
+    /// Для кожного valid-файлу (на них модель не навчалася) порівнює ентропію і розмір після LZ77 + Гаффмана
+    /// для самого файлу та для залишків передбачення, перевіряє відновлення і пише результати в базу.
+    /// </summary>
+    private static void RunPredictionExperiment(string datasetPath)
+    {
+        CultureInfo c = CultureInfo.InvariantCulture;
+        (_, IReadOnlyList<LabeledFile> valid) = LabeledDataset.SplitFiles(LabeledDataset.ListFiles(datasetPath));
+        BytePredictor predictor = BytePredictor.BuiltIn;
+        var experiment = new Experiment
+        {
+            Kind = ExperimentKind.Prediction,
+            StartedAtUtc = DateTime.UtcNow,
+            Dataset = Path.GetFullPath(datasetPath),
+            ParametersJson = JsonSerializer.Serialize(new
+            {
+                model = predictor.ModelId.ToString("X16", c),
+                contextBytes = predictor.ContextBytes,
+                layers = string.Join("-", predictor.Network.LayerSizes),
+                files = "valid files: every third file of each group, not used for training",
+                encoder = "LZ77 greedy + Huffman, 64 KB blocks, stored blocks allowed",
+            }),
+        };
+
+        Console.WriteLine();
+        Write($"Вплив передбачення (модель {predictor.ModelId:X16}) на файлах, яких модель не бачила", ConsoleColor.Cyan);
+        Console.WriteLine($"  {"Група",5} {"Файл",-24} {"Байтів",8} {"H файлу",8} {"H залишків",11} {"LZ77 файлу",11} {"LZ77 залишків",14} {"Час, с",7}");
+        foreach (LabeledFile file in valid)
+        {
+            byte[] data = File.ReadAllBytes(file.FullPath);
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            byte[] encoded = predictor.Encode(data);
+            double seconds = watch.Elapsed.TotalSeconds;
+            if (!predictor.Decode(encoded).AsSpan().SequenceEqual(data))
+                throw new InvalidOperationException($"Передбачення не відновило {file.Source} побайтово.");
+
+            byte[] residuals = encoded[BytePredictor.ModelIdSize..];
+            var result = new PredictionResult
+            {
+                Group = (byte)file.Label,
+                OriginalBytes = data.Length,
+                OriginalEntropy = FeatureExtractor.Compute(data).Entropy,
+                ResidualEntropy = FeatureExtractor.Compute(residuals).Entropy,
+                EncodedBytes = EncodedSize(data),
+                PredictedEncodedBytes = EncodedSize(encoded),
+                ElapsedSeconds = seconds,
+            };
+            experiment.PredictionResults.Add(result);
+            Console.WriteLine(string.Format(c, "  {0,5} {1,-24} {2,8} {3,8:F3} {4,11:F3} {5,11} {6,14} {7,7:F2}",
+                file.Label, Fit(Path.GetFileName(file.Source), 24), result.OriginalBytes, result.OriginalEntropy,
+                result.ResidualEntropy, result.EncodedBytes, result.PredictedEncodedBytes, result.ElapsedSeconds));
+        }
+        Write("[OK] Усі файли відновлено із залишків побайтово.", ConsoleColor.Green);
+
+        IMeasurementStore store = OpenMeasurementStore();
+        if (store.IsEnabled)
+        {
+            store.SaveExperiment(experiment);
+            Write($"[OK] Результати збережено в базі даних (експеримент №{experiment.Id}).", ConsoleColor.Green);
+        }
+        else
+        {
+            Write("[УВАГА] База даних вимкнена: результати виведено лише в консоль.", ConsoleColor.Yellow);
+        }
+    }
+
+    /// <summary>Розмір після LZ77 + Гаффмана блоками по 64 КБ; блок без виграшу зберігається як є.</summary>
+    private static long EncodedSize(byte[] data) =>
+        data.Length == 0 ? 0 : Lz77CompressionService.PrepareFixedBlocks(data).Sum(b => (long)b.CodedLength);
 
     private static void TrainClassifierInteractive()
     {
