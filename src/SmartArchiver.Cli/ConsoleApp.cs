@@ -1,16 +1,19 @@
 using System.Globalization;
+using System.Text.Json;
+using SmartArchiver.Compression;
 using System.Text;
 using SmartArchiver.Analysis;
 using SmartArchiver.Archive;
 using SmartArchiver.Core;
 using SmartArchiver.Data;
+using SmartArchiver.Data.Entities;
 
 namespace SmartArchiver.Cli;
 
 /// <summary>
 /// Консольний інтерфейс чекпоінта 1.
 /// Без аргументів запускає інтерактивне меню, з аргументами працює як звичайна команда
-/// (pack, unpack, info, demo, db, analyze).
+/// (pack, unpack, info, demo, db, analyze, experiment).
 /// </summary>
 internal static class ConsoleApp
 {
@@ -64,6 +67,9 @@ internal static class ConsoleApp
             case "analyze" when args.Length == 2:
                 AnalyzeFile(args[1]);
                 return 0;
+            case "experiment" when args.Length == 2:
+                RunParsingComparison(args[1]);
+                return 0;
             default:
                 Console.WriteLine("Використання:");
                 Console.WriteLine("  smartarchiver                            інтерактивне меню");
@@ -73,6 +79,7 @@ internal static class ConsoleApp
                 Console.WriteLine("  smartarchiver demo                          автоматична демонстрація");
                 Console.WriteLine("  smartarchiver db                            стан бази даних (створює її, якщо ще немає)");
                 Console.WriteLine("  smartarchiver analyze <файл>                ознаки вмісту файлу (ентропія, текстовість тощо)");
+                Console.WriteLine("  smartarchiver experiment <тека>            порівняти Greedy та Lazy на Datasets");
                 return 1;
         }
     }
@@ -97,6 +104,7 @@ internal static class ConsoleApp
             Console.WriteLine("  4) Демонстрація: усі можливості на прикладі");
             Console.WriteLine("  5) База даних: стан і створення схеми");
             Console.WriteLine("  6) Аналіз файлу: ознаки вмісту");
+            Console.WriteLine("  7) Експерименти: порівняння алгоритмів");
             Console.WriteLine("  0) Вихід");
 
             string? choice = Prompt("Ваш вибір");
@@ -113,11 +121,12 @@ internal static class ConsoleApp
                 case "4": Guard(Demo); break;
                 case "5": Guard(ShowDatabase); break;
                 case "6": Guard(AnalyzeInteractive); break;
+                case "7": Guard(ExperimentsMenu); break;
                 case "0":
                     Console.WriteLine("До побачення!");
                     return 0;
                 default:
-                    Write("Невідомий пункт. Введіть число від 0 до 6.", ConsoleColor.Yellow);
+                    Write("Невідомий пункт. Введіть число від 0 до 7.", ConsoleColor.Yellow);
                     break;
             }
         }
@@ -249,6 +258,106 @@ internal static class ConsoleApp
             return;
         }
         AnalyzeFile(path);
+    }
+
+    /// <summary>Меню експериментів другого чекпоінту.</summary>
+    private static void ExperimentsMenu()
+    {
+        while (true)
+        {
+            Console.WriteLine();
+            Write("========== Експерименти ==========", ConsoleColor.Cyan);
+            Console.WriteLine("  1) Порівняти Greedy та Lazy LZ77");
+            Console.WriteLine("  0) Повернутися до головного меню");
+
+            string? choice = Prompt("Ваш вибір");
+            switch (choice)
+            {
+                case "1":
+                    Guard(ParsingComparisonInteractive);
+                    break;
+                case "0":
+                case null:
+                    return;
+                default:
+                    Write("Невідомий пункт. Введіть 0 або 1.", ConsoleColor.Yellow);
+                    break;
+            }
+        }
+    }
+
+    private static void ParsingComparisonInteractive()
+    {
+        // Папку з даними можна вказати будь-яку; за замовчуванням Datasets.
+        string? path = Prompt("Каталог із групами 0..6 (Натисніть Enter для використання за замовчуванням)", "Datasets");
+        if (path is null)
+            return;
+
+        RunParsingComparison(path);
+    }
+
+    private static void RunParsingComparison(string datasetPath)
+    {
+        Write("Запускаємо порівняння Greedy та Lazy...", ConsoleColor.Cyan);
+
+        // Бібліотека Compression виконує вимірювання без доступу до БД.
+        IReadOnlyList<ParsingGroupMeasurement> measurements =
+            ParsingComparisonRunner.RunDirectory(datasetPath);
+
+        Console.WriteLine();
+        Console.WriteLine($"  {"Група",-7} {"Метод",-8} {"Було (байт)",14} {"Стало (байт)",15} {"Час (с)",12}");
+        foreach (ParsingGroupMeasurement measurement in measurements)
+        {
+            Console.WriteLine($"  {measurement.Group,-7} {measurement.Method,-8} {measurement.OriginalBytes,14} {measurement.EncodedBytes,15} {measurement.ElapsedSeconds,12:F4}");
+        }
+
+        // Створюємо сутності Data лише на рівні застосунку.
+        var experiment = new Experiment
+        {
+            Kind = ExperimentKind.Parsing,
+            StartedAtUtc = DateTime.UtcNow,
+            Dataset = Path.GetFullPath(datasetPath),
+            ParametersJson = JsonSerializer.Serialize(new
+            {
+                blockSize = ParsingComparisonRunner.BlockSize,
+                maxChain = 256,
+                minLazyGain = 2,
+                timeScope = "LZ77 parsing + Huffman encoding",
+                sizeScope = "encoded block without archive container",
+                grouping = "subdirectories 0..6"
+            })
+        };
+
+        foreach (ParsingGroupMeasurement measurement in measurements)
+        {
+            experiment.ParsingResults.Add(new ParsingResult
+            {
+                Group = measurement.Group,
+                Method = measurement.Method switch
+                {
+                    Lz77ParsingMethod.Greedy => ParsingMethod.Greedy,
+                    Lz77ParsingMethod.Lazy => ParsingMethod.Lazy,
+
+                    // Захист від невідомого значення переліку.
+                    _ => throw new InvalidOperationException(
+                        $"Непідтримуваний метод розбору LZ77: {measurement.Method}")
+                },
+                OriginalBytes = measurement.OriginalBytes,
+                EncodedBytes = measurement.EncodedBytes,
+                ElapsedSeconds = measurement.ElapsedSeconds
+            });
+        }
+
+        IMeasurementStore store = OpenMeasurementStore();
+        if (store.IsEnabled)
+        {
+            store.SaveExperiment(experiment);
+            Write($"[OK] Експеримент №{experiment.Id} збережено в базі даних.", ConsoleColor.Green);
+        }
+        else
+        {
+            Write("[УВАГА] База даних вимкнена: результати виведено лише в консоль.", ConsoleColor.Yellow);
+        }
     }
 
     // ------------------------------------------------------------------

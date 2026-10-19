@@ -9,6 +9,7 @@
     <ProjectReference Include="..\SmartArchiver.Analysis\SmartArchiver.Analysis.csproj" />
     <ProjectReference Include="..\SmartArchiver.Archive\SmartArchiver.Archive.csproj" />
     <ProjectReference Include="..\SmartArchiver.Data\SmartArchiver.Data.csproj" />
+    <ProjectReference Include="..\SmartArchiver.Compression\SmartArchiver.Compression.csproj" />
   </ItemGroup>
 
   <ItemGroup>
