@@ -163,7 +163,7 @@ public class RejectionTests
     public void Reader_UnsupportedStrategyInTable_E_CODE()
     {
         byte[] archive = SingleFileArchive();
-        archive[StrategyOffset] = (byte)CompressionStrategy.Huffman;
+        archive[StrategyOffset] = (byte)CompressionStrategy.Lz77Huffman;
         TestData.AssertCode(ErrorCode.E_CODE, () => ArchiveReader.Read(archive));
     }
 
