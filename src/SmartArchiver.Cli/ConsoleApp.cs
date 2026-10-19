@@ -67,6 +67,9 @@ internal static class ConsoleApp
             case "analyze" when args.Length == 2:
                 AnalyzeFile(args[1]);
                 return 0;
+            case "train-classifier" when args.Length <= 3:
+                TrainClassifier(args.Length > 1 ? args[1] : "Datasets", args.Length > 2 ? args[2] : "classifier.json");
+                return 0;
             case "experiment" when args.Length == 2:
                 RunParsingComparison(args[1]);
                 return 0;
@@ -78,7 +81,8 @@ internal static class ConsoleApp
                 Console.WriteLine("  smartarchiver info <archive.arc>            показати вміст");
                 Console.WriteLine("  smartarchiver demo                          автоматична демонстрація");
                 Console.WriteLine("  smartarchiver db                            стан бази даних (створює її, якщо ще немає)");
-                Console.WriteLine("  smartarchiver analyze <файл>                ознаки вмісту файлу (ентропія, текстовість тощо)");
+                Console.WriteLine("  smartarchiver analyze <файл>                ознаки, тип файлу і стратегія стиснення");
+                Console.WriteLine("  smartarchiver train-classifier [датасет] [модель.json]  навчити класифікатор (за замовчуванням Datasets)");
                 Console.WriteLine("  smartarchiver experiment <тека>            порівняти Greedy та Lazy на Datasets");
                 return 1;
         }
@@ -268,6 +272,7 @@ internal static class ConsoleApp
             Console.WriteLine();
             Write("========== Експерименти ==========", ConsoleColor.Cyan);
             Console.WriteLine("  1) Порівняти Greedy та Lazy LZ77");
+            Console.WriteLine("  2) Навчити класифікатор типу файлу");
             Console.WriteLine("  0) Повернутися до головного меню");
 
             string? choice = Prompt("Ваш вибір");
@@ -276,11 +281,14 @@ internal static class ConsoleApp
                 case "1":
                     Guard(ParsingComparisonInteractive);
                     break;
+                case "2":
+                    Guard(TrainClassifierInteractive);
+                    break;
                 case "0":
                 case null:
                     return;
                 default:
-                    Write("Невідомий пункт. Введіть 0 або 1.", ConsoleColor.Yellow);
+                    Write("Невідомий пункт. Введіть 0, 1 або 2.", ConsoleColor.Yellow);
                     break;
             }
         }
@@ -492,6 +500,118 @@ internal static class ConsoleApp
 
         string lags = string.Join(" ", f.Autocorrelation.Select(r => r.ToString("+0.00;-0.00; 0.00", c)));
         Console.WriteLine($"  Автокореляція, лаги 1-16: {lags}");
+
+        FileAnalysis analysis = new FileAnalyzer().Analyze(data);
+        Console.WriteLine(string.Format(c, "  Тип за класифікатором:    {0} = {1}, впевненість {2:P0}", (byte)analysis.Kind, KindName(analysis.Kind), analysis.Confidence));
+        Console.WriteLine($"  Стратегія стиснення:      {StrategyName(analysis.Strategy)}");
+    }
+
+    private static string KindName(FileKind kind) => kind switch
+    {
+        FileKind.Text => "природний текст",
+        FileKind.SourceCode => "вихідний код",
+        FileKind.Structured => "структуровані дані",
+        FileKind.Raster => "растр без стиснення",
+        FileKind.Executable => "виконуваний файл",
+        FileKind.AlreadyCompressed => "вже стиснуте",
+        FileKind.Artificial => "штучні дані",
+        _ => "невідомо",
+    };
+
+    private static string StrategyName(CompressionStrategy strategy) => strategy switch
+    {
+        CompressionStrategy.NoCompression => "без стиснення (зберігається як є)",
+        CompressionStrategy.Lz77Huffman => "LZ77 + Гаффман",
+        _ => strategy.ToString(),
+    };
+
+    private static void TrainClassifierInteractive()
+    {
+        string? dataset = Prompt("Каталог із групами 0..6", "Datasets");
+        string? model = Prompt("Куди зберегти модель", "classifier.json");
+        if (dataset is null || model is null)
+            return;
+        TrainClassifier(dataset, model);
+    }
+
+    /// <summary>
+    /// Навчає класифікатор з кількох seed, обирає модель за macro-F1 на valid,
+    /// зберігає її і пише прогони в базу (експеримент Training).
+    /// </summary>
+    private static void TrainClassifier(string datasetPath, string modelPath)
+    {
+        CultureInfo c = CultureInfo.InvariantCulture;
+        DatasetSplit split = LabeledDataset.SplitByFile(
+            LabeledDataset.Load(datasetPath, LabeledDataset.DefaultChunkSize, LabeledDataset.DefaultMaxChunksPerFile));
+        TrainingOptions options = TrainingOptions.Default;
+
+        Console.WriteLine();
+        Write($"Навчання класифікатора: {split.Train.Count} прикладів у train, {split.Valid.Count} у valid", ConsoleColor.Cyan);
+        Console.WriteLine($"  Мережа {string.Join("-", options.LayerSizes)}, епох {options.Epochs}, швидкість навчання {options.LearningRate.ToString(c)}, seed {string.Join(", ", options.Seeds)}");
+
+        TrainingReport report = ClassifierTrainer.Train(split, options);
+
+        Console.WriteLine();
+        Console.WriteLine($"  {"Seed",4} {"Втрата 1",9} {"Втрата N",9} {"F1 train",9} {"F1 valid",9}");
+        for (int i = 0; i < report.Runs.Count; i++)
+        {
+            TrainingRunResult run = report.Runs[i];
+            Console.WriteLine(string.Format(c, "  {0,4} {1,9:F4} {2,9:F4} {3,9:F3} {4,9:F3}{5}",
+                run.Seed, run.FirstEpochLoss, run.FinalLoss, run.Train.MacroF1, run.Valid.MacroF1,
+                i == report.SelectedIndex ? "  <- обрано" : ""));
+        }
+
+        Console.WriteLine();
+        Console.WriteLine("  Матриця помилок обраної моделі на valid (рядок = справжній тип, стовпець = передбачений):");
+        Console.WriteLine("        " + string.Concat(Enumerable.Range(0, LabeledDataset.ClassCount).Select(k => $"{k,5}")));
+        int[][] matrix = report.Selected.Valid.ToArray();
+        for (int row = 0; row < matrix.Length; row++)
+            Console.WriteLine($"  {row,4}  " + string.Concat(matrix[row].Select(v => $"{v,5}")));
+
+        using (FileStream file = File.Create(modelPath))
+            new FileClassifier(report.Selected.Network).Save(file);
+        Write($"[OK] Модель збережено: {Path.GetFullPath(modelPath)}", ConsoleColor.Green);
+
+        var experiment = new Experiment
+        {
+            Kind = ExperimentKind.Training,
+            StartedAtUtc = DateTime.UtcNow,
+            Dataset = Path.GetFullPath(datasetPath),
+            ParametersJson = JsonSerializer.Serialize(new
+            {
+                chunkSize = LabeledDataset.DefaultChunkSize,
+                maxChunksPerFile = LabeledDataset.DefaultMaxChunksPerFile,
+                split = "every third file of each group goes to valid",
+                features = FeatureVector.Length,
+            }),
+        };
+        for (int i = 0; i < report.Runs.Count; i++)
+        {
+            TrainingRunResult run = report.Runs[i];
+            experiment.TrainingRuns.Add(new TrainingRun
+            {
+                InitSeed = run.Seed,
+                LayerSizes = string.Join(",", options.LayerSizes),
+                Epochs = options.Epochs,
+                LearningRate = options.LearningRate,
+                TrainLoss = run.FinalLoss,
+                TrainMacroF1 = run.Train.MacroF1,
+                ValidMacroF1 = run.Valid.MacroF1,
+                ConfusionMatrixJson = JsonSerializer.Serialize(run.Valid.ToArray()),
+                IsSelected = i == report.SelectedIndex,
+            });
+        }
+
+        IMeasurementStore store = OpenMeasurementStore();
+        if (store.IsEnabled)
+        {
+            store.SaveExperiment(experiment);
+            Write($"[OK] Прогони навчання збережено в базі даних (експеримент №{experiment.Id}).", ConsoleColor.Green);
+        }
+        else
+        {
+            Write("[УВАГА] База даних вимкнена: результати виведено лише в консоль.", ConsoleColor.Yellow);
+        }
     }
 
     private static string ByteLabel(byte b) => b switch
