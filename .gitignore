@@ -427,3 +427,6 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+
+# Personal database connection strings (see README)
+appsettings.Local.json

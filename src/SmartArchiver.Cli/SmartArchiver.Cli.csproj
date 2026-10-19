@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>smartarchiver</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SmartArchiver.Analysis\SmartArchiver.Analysis.csproj" />
+    <ProjectReference Include="..\SmartArchiver.Archive\SmartArchiver.Archive.csproj" />
+    <ProjectReference Include="..\SmartArchiver.Data\SmartArchiver.Data.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- appsettings.Local.json holds the personal connection string and is ignored by git. -->
+    <None Update="appsettings*.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>
