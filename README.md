@@ -9,7 +9,7 @@
 | `src/SmartArchiver.Core` | спільні типи: коди помилок, `ArchiveException`, типи файлів | усі |
 | `src/SmartArchiver.Compression` | канонічний Гаффман (далі LZ77) | Стиснення |
 | `src/SmartArchiver.Security` | PBKDF2, AES-256-CTR, HMAC-SHA256 | Захист |
-| `src/SmartArchiver.Analysis` | аналіз файлу: ознаки вмісту, перцептрон | Аналіз файлу |
+| `src/SmartArchiver.Analysis` | аналіз файлу: ознаки, перцептрон, класифікатор типу, вибір стратегії стиснення | Аналіз файлу |
 | `src/SmartArchiver.Archive` | формат SARC: томи, таблиця файлів, блоки, захищений архів | Інтеграція |
 | `src/SmartArchiver.Data` | база даних результатів (EF Core + SQL Server) | База даних |
 | `src/SmartArchiver.Cli` | консольна програма `smartarchiver` | Інтеграція |
@@ -18,7 +18,7 @@
 | `docs/RUN.md` | меню й команди програми | |
 | `docs/decisions.md` | рішення команди: проблема → варіанти → рішення → чому | |
 
-Залежності йдуть в один бік: Compression залежить лише від Core, Security і Analysis ні від кого, Archive — від Core і Security, CLI — від Analysis, Archive і Data. Зони не посилаються одна на одну, тож поломка в одній не зупиняє збірку й тести інших.
+Залежності йдуть в один бік: Compression і Analysis залежать лише від Core, Security ні від кого, Archive — від Core і Security, CLI — від Analysis, Archive і Data. Зони не посилаються одна на одну, тож поломка в одній не зупиняє збірку й тести інших.
 
 Спільні налаштування всіх проєктів — у `Directory.Build.props`, версії пакетів — у `Directory.Packages.props` (у `.csproj` версій немає), версія SDK — у `global.json`.
 
@@ -36,6 +36,22 @@ dotnet run --project src/SmartArchiver.Cli
 ```
 
 Без SQL Server 3 тести бази даних позначаються як пропущені (`Skipped`), це нормально. Як запустити і їх, описано в розділі «Тести бази даних». Пункти меню й команди описано в [docs/RUN.md](docs/RUN.md).
+
+## Аналіз файлу
+
+Перед архівацією аналізатор (`FileAnalyzer`, контракт `IFileAnalyzer` у Core) визначає тип файлу `file_type` 0–6 і стратегію стиснення: шум і вже стиснені дані зберігаються як є, решта стискається LZ77 + Гаффманом.
+
+```bash
+dotnet run --project src/SmartArchiver.Cli -- analyze README.md
+```
+
+Тип визначає перцептрон, навчений на `Datasets/` (теки `0`…`6` за типами). Модель вбудована в збірку (`src/SmartArchiver.Analysis/Model/classifier.json`). Перенавчити її, наприклад на `train/` від викладача, розкладеному так само по теках:
+
+```bash
+dotnet run --project src/SmartArchiver.Cli -- train-classifier Datasets src/SmartArchiver.Analysis/Model/classifier.json
+```
+
+Команда навчає мережу з п'яти seed, обирає модель за macro-F1 на valid (кожен третій файл групи), друкує матрицю помилок і, якщо база ввімкнена, записує прогони в `TrainingRuns`. Чому саме так і які результати — `docs/decisions.md`, рішення 26 і 27.
 
 ## База даних
 
