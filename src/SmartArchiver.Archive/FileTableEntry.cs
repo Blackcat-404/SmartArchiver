@@ -28,7 +28,7 @@ public sealed record FileTableEntry(
         BinaryIo.WriteU64(s, Offset);
     }
 
-    /// <summary>Читає запис і перевіряє: ім'я безпечне, тип і стратегія відомі, стратегія реалізована.</summary>
+    /// <summary>Читає запис і перевіряє: ім'я безпечне, тип і стратегія відомі.</summary>
     internal static FileTableEntry ReadFrom(ByteReader r)
     {
         int nameLength = r.ReadU16();
@@ -56,8 +56,6 @@ public sealed record FileTableEntry(
             throw new ArchiveException(ErrorCode.E_PAYLOAD, $"Невідомий тип файлу: {kind}.");
         if (!Enum.IsDefined((CompressionStrategy)strategy))
             throw new ArchiveException(ErrorCode.E_CODE, $"Невідома стратегія: {strategy}.");
-        if ((CompressionStrategy)strategy != CompressionStrategy.NoCompression)
-            throw new ArchiveException(ErrorCode.E_CODE, $"Стратегія {strategy} ще не підтримується.");
 
         return new FileTableEntry(name, size, crc, (FileKind)kind, (CompressionStrategy)strategy, offset);
     }

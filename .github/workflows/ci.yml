@@ -17,6 +17,9 @@ permissions:
 
 env:
   SOLUTION: SmartArchiver.slnx
+  # Нижня межа покриття рядків у відсотках. 0 = лише звіт без перевірки; після першого прогону підніміть
+  # до поточного значення, щоб покриття не падало непомітно.
+  COVERAGE_MIN_LINE: 0
   DOTNET_NOLOGO: true
   DOTNET_CLI_TELEMETRY_OPTOUT: true
 
@@ -92,6 +95,33 @@ jobs:
           --logger "trx;LogFilePrefix=test-results"
           --collect:"XPlat Code Coverage"
           --results-directory ./TestResults
+
+      # Звіт покриття: cobertura з усіх тестових проєктів зводиться в один звіт. Один раз на прогін (Linux),
+      # бо Windows-задача дала б ті самі числа. Без тестів, застосунку Avalonia і міграцій EF Core.
+      - name: Coverage report
+        if: runner.os == 'Linux' && !cancelled() && hashFiles('TestResults/**/coverage.cobertura.xml') != ''
+        run: |
+          dotnet tool install --global dotnet-reportgenerator-globaltool
+          export PATH="$PATH:$HOME/.dotnet/tools"
+          reportgenerator \
+            "-reports:TestResults/**/coverage.cobertura.xml" \
+            "-targetdir:CoverageReport" \
+            "-reporttypes:MarkdownSummaryGithub;Html;TextSummary" \
+            "-assemblyfilters:+SmartArchiver.*;-SmartArchiver.*.Tests;-SmartArchiver.App" \
+            "-classfilters:-SmartArchiver.Data.Migrations.*"
+          cat CoverageReport/SummaryGithub.md >> "$GITHUB_STEP_SUMMARY"
+          cat CoverageReport/Summary.txt
+          line=$(grep -m1 "Line coverage" CoverageReport/Summary.txt | sed -E 's/[^0-9.]*([0-9.]+)%.*/\1/')
+          echo "Покриття рядків: ${line}% (межа ${COVERAGE_MIN_LINE}%)"
+          awk -v actual="$line" -v min="$COVERAGE_MIN_LINE" 'BEGIN { exit !(actual + 0 >= min + 0) }'
+
+      - name: Upload coverage report
+        if: runner.os == 'Linux' && !cancelled() && hashFiles('CoverageReport/**') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: CoverageReport/**
+          retention-days: 14
 
       - name: Upload test results and coverage
         if: always()

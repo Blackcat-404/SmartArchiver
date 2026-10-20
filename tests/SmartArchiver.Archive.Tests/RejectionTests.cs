@@ -160,11 +160,15 @@ public class RejectionTests
     }
 
     [Fact]
-    public void Reader_UnsupportedStrategyInTable_E_CODE()
+    public void Reader_Lz77StrategyInTable_OverStoredBlocks_IsAccepted()
     {
+        // Стратегія файлу Lz77Huffman дозволяє блоки, збережені як є (блок без виграшу): це не помилка.
         byte[] archive = SingleFileArchive();
         archive[StrategyOffset] = (byte)CompressionStrategy.Lz77Huffman;
-        TestData.AssertCode(ErrorCode.E_CODE, () => ArchiveReader.Read(archive));
+
+        var file = Assert.Single(ArchiveReader.Read(archive));
+
+        Assert.Equal(CompressionStrategy.Lz77Huffman, file.Strategy);
     }
 
     [Fact]

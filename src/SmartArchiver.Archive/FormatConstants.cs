@@ -29,6 +29,18 @@ public static class FormatConstants
     /// <summary>Розмір блока за замовчуванням, поки немає team_config.json.</summary>
     public const int DefaultBlockSize = 64 * 1024;
 
+    /// <summary>file_count(4): єдине фіксоване поле payload перед таблицею файлів.</summary>
+    public const int PayloadFixedSize = 4;
+
+    /// <summary>HMAC-SHA256 у кінці захищеного тому. Місткість тому в пакувальнику завжди враховує його.</summary>
+    public const int TagSize = 32;
+
+    /// <summary>
+    /// Найбільший raw_len одного блока. Читач відхиляє більші значення до виділення пам'яті,
+    /// інакше підроблений заголовок блока змусив би декодер виділити гігабайти.
+    /// </summary>
+    public const int MaxBlockRawLength = 16 * 1024 * 1024;
+
     /// <summary>Максимальна довжина імені в байтах UTF-8.</summary>
     public const int MaxNameBytes = 255;
 

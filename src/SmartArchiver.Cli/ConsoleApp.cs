@@ -50,7 +50,7 @@ internal static class ConsoleApp
         switch (args[0].ToLowerInvariant())
         {
             case "pack" when args.Length >= 3:
-                PackFiles(args[1], args[2..], FormatConstants.DefaultBlockSize);
+                PackCommand(args);
                 return 0;
             case "unpack" when args.Length == 3:
                 UnpackFile(args[1], args[2]);
@@ -79,11 +79,14 @@ internal static class ConsoleApp
             case "experiment" when args.Length == 2:
                 RunParsingComparison(args[1]);
                 return 0;
+            case "pack-experiment" when args.Length <= 4:
+                PackExperimentCommand(args);
+                return 0;
             default:
                 Console.WriteLine("Використання:");
                 Console.WriteLine("  smartarchiver                            інтерактивне меню");
-                Console.WriteLine("  smartarchiver pack <archive.arc> <файл>...  запакувати файли");
-                Console.WriteLine("  smartarchiver unpack <archive.arc> <тека>   розпакувати");
+                Console.WriteLine("  smartarchiver pack <archive.arc> [--volume-size <байт>] <файл>...  запакувати файли зі стисненням (за потреби кількома томами)");
+                Console.WriteLine("  smartarchiver unpack <archive.arc> <тека>   розпакувати (для томів name.partN.arc достатньо вказати будь-який том)");
                 Console.WriteLine("  smartarchiver info <archive.arc>            показати вміст");
                 Console.WriteLine("  smartarchiver demo                          автоматична демонстрація");
                 Console.WriteLine("  smartarchiver db                            стан бази даних (створює її, якщо ще немає)");
@@ -92,6 +95,7 @@ internal static class ConsoleApp
                 Console.WriteLine("  smartarchiver train-predictor [датасет] [модель.json]   навчити передбачення наступного байта");
                 Console.WriteLine("  smartarchiver prediction-experiment [датасет]          вплив передбачення на ентропію і розмір");
                 Console.WriteLine("  smartarchiver experiment <тека>            порівняти Greedy та Lazy на Datasets");
+                Console.WriteLine("  smartarchiver pack-experiment [датасет] [місткість тому] [team_config.json]  ДП-рюкзак проти жадібного пакування томів");
                 return 1;
         }
     }
@@ -103,8 +107,8 @@ internal static class ConsoleApp
     private static int Interactive()
     {
         Write("==============================================", ConsoleColor.Cyan);
-        Write("  SmartArchiver, чекпоінт 1: формат і томи", ConsoleColor.Cyan);
-        Write("  (без стиснення й шифрування, це наступні етапи)", ConsoleColor.DarkCyan);
+        Write("  SmartArchiver, чекпоінт 2: формат, стиснення і томи", ConsoleColor.Cyan);
+        Write("  (шифрування підключається окремо)", ConsoleColor.DarkCyan);
         Write("==============================================", ConsoleColor.Cyan);
 
         while (true)
@@ -214,6 +218,13 @@ internal static class ConsoleApp
             Write($"Некоректне значення, беремо {blockSize}.", ConsoleColor.Yellow);
         }
 
+        string? volumeText = Prompt("Найбільший розмір тому в байтах (0 = один том без обмеження)", "0");
+        if (!long.TryParse(volumeText, NumberStyles.None, CultureInfo.InvariantCulture, out long volumeSize))
+        {
+            volumeSize = 0;
+            Write("Некоректне значення, пишемо один том.", ConsoleColor.Yellow);
+        }
+
         string? archivePath = Prompt("Куди зберегти архів", "archive.arc");
         if (string.IsNullOrEmpty(archivePath))
         {
@@ -231,7 +242,7 @@ internal static class ConsoleApp
             return;
         }
 
-        PackFiles(archivePath, paths.ToArray(), blockSize);
+        PackFiles(archivePath, paths.ToArray(), blockSize, volumeSize);
     }
 
     private static void UnpackInteractive()
@@ -282,6 +293,7 @@ internal static class ConsoleApp
             Console.WriteLine("  1) Порівняти Greedy та Lazy LZ77");
             Console.WriteLine("  2) Навчити класифікатор типу файлу");
             Console.WriteLine("  3) Вплив передбачення наступного байта");
+            Console.WriteLine("  4) ДП-рюкзак проти жадібного пакування томів");
             Console.WriteLine("  0) Повернутися до головного меню");
 
             string? choice = Prompt("Ваш вибір");
@@ -296,11 +308,14 @@ internal static class ConsoleApp
                 case "3":
                     Guard(PredictionExperimentInteractive);
                     break;
+                case "4":
+                    Guard(PackingExperimentInteractive);
+                    break;
                 case "0":
                 case null:
                     return;
                 default:
-                    Write("Невідомий пункт. Введіть число від 0 до 3.", ConsoleColor.Yellow);
+                    Write("Невідомий пункт. Введіть число від 0 до 4.", ConsoleColor.Yellow);
                     break;
             }
         }
@@ -381,10 +396,218 @@ internal static class ConsoleApp
     }
 
     // ------------------------------------------------------------------
+    // Експеримент: ДП-рюкзак проти жадібного пакування томів
+    // ------------------------------------------------------------------
+
+    /// <summary>Розмір блока в експерименті: щоб блок (до 16 КіБ + 15 байт) влазив у том навіть невеликої місткості.</summary>
+    private const int PackingBlockSize = 16_384;
+
+    /// <summary>Місткість тому за замовчуванням, поки немає team_config.json: корпус займає кілька томів.</summary>
+    private const long DefaultPackingVolumeBytes = 65_536;
+
+    private static void PackExperimentCommand(string[] args)
+    {
+        string dataset = args.Length > 1 ? args[1] : "Datasets";
+        long volumeBytes = DefaultPackingVolumeBytes;
+        if (args.Length > 2 && (!long.TryParse(args[2], NumberStyles.None, CultureInfo.InvariantCulture, out volumeBytes) || volumeBytes <= 0))
+        {
+            throw new ArgumentException("Місткість тому має бути додатним цілим числом (байт).");
+        }
+        RunPackingExperiment(dataset, volumeBytes, args.Length > 3 ? args[3] : null);
+    }
+
+    private static void PackingExperimentInteractive()
+    {
+        string? dataset = Prompt("Каталог із групами 0..6", "Datasets");
+        if (dataset is null)
+            return;
+
+        string? sizeText = Prompt("Місткість тому в байтах (max_volume_bytes)", DefaultPackingVolumeBytes.ToString(CultureInfo.InvariantCulture));
+        if (!long.TryParse(sizeText, NumberStyles.None, CultureInfo.InvariantCulture, out long volumeBytes) || volumeBytes <= 0)
+        {
+            volumeBytes = DefaultPackingVolumeBytes;
+            Write($"Некоректне значення, беремо {volumeBytes}.", ConsoleColor.Yellow);
+        }
+        RunPackingExperiment(dataset, volumeBytes, null);
+    }
+
+    /// <summary>
+    /// Усі файли корпусу проходять аналіз і стиснення, потім їхні блоки розкладаються по томах двома способами:
+    /// ДП-рюкзаком і жадібно. Обидва томи-набори записуються, читаються назад і звіряються з оригіналами.
+    /// Результати (по рядку на том і метод) пишуться в базу, якщо вона ввімкнена.
+    /// </summary>
+    private static void RunPackingExperiment(string datasetPath, long maxVolumeBytes, string? configPath)
+    {
+        CultureInfo c = CultureInfo.InvariantCulture;
+        PackingPriorities priorities = PackingPriorities.Default;
+        if (configPath is not null)
+        {
+            TeamConfig config = TeamConfig.Load(configPath);
+            maxVolumeBytes = config.MaxVolumeBytes;
+            priorities = config.Priorities;
+        }
+
+        IReadOnlyList<LabeledFile> corpus = LabeledDataset.ListFiles(datasetPath);
+        if (corpus.Count == 0)
+        {
+            throw new ArgumentException($"У каталозі {datasetPath} немає файлів корпусу (теки 0..6).");
+        }
+
+        var inputs = new List<ArchiveInput>();
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        foreach (LabeledFile file in corpus)
+        {
+            string name = Path.GetFileName(file.Source);
+            if (!names.Add(name))
+            {
+                name = $"{file.Label}_{name}";
+                names.Add(name);
+            }
+            inputs.Add(new ArchiveInput(name, File.ReadAllBytes(file.FullPath)));
+        }
+
+        Console.WriteLine();
+        Write("Аналіз і стиснення файлів корпусу...", ConsoleColor.Cyan);
+        var writer = new ArchiveWriter(PackingBlockSize, new FileAnalyzer());
+        IReadOnlyList<PreparedFile> prepared = writer.Prepare(inputs);
+        PackingComparison comparison = VolumePacker.Compare(prepared, maxVolumeBytes, priorities);
+
+        int blockCount = prepared.Sum(f => f.Blocks.Count);
+        long codedBytes = prepared.Sum(f => f.CodedSize);
+        long originalBytes = prepared.Sum(f => (long)f.Size);
+        Console.WriteLine(string.Format(c, "  Файлів: {0}, блоків: {1}, вихідний обсяг: {2} байт, після стиснення: {3} байт, місткість тому: {4} байт",
+            prepared.Count, blockCount, originalBytes, codedBytes, maxVolumeBytes));
+        Console.WriteLine($"  Вага блока = coded_len + {FormatConstants.BlockHeaderSize} байт, цінність за типом файлу: {string.Join(", ", priorities.Values)} (типи 0..6)");
+        if (configPath is null)
+        {
+            Write("  [УВАГА] Пріоритети типів стандартні (заглушка): справжні задає team_config.json (4-й параметр команди).", ConsoleColor.Yellow);
+        }
+
+        Console.WriteLine();
+        Console.WriteLine($"  {"Том",4} {"Метод",-7} {"Блоків",7} {"Використано",12} {"Місткість W",12} {"Цінність",9} {"Час, мс",9}");
+        int rows = Math.Max(comparison.Dp.Volumes.Count, comparison.Greedy.Volumes.Count);
+        for (int volume = 0; volume < rows; volume++)
+        {
+            PrintPackingRow(volume, "ДП", comparison.Dp);
+            PrintPackingRow(volume, "Жадібний", comparison.Greedy);
+        }
+        Console.WriteLine();
+        foreach ((string label, PackingPlan plan) in new[] { ("ДП", comparison.Dp), ("Жадібний", comparison.Greedy) })
+        {
+            Console.WriteLine(string.Format(c, "  {0,-9} томів {1,3}, блоків {2,4}, використано {3,9} байт, цінність {4,6}, час {5,8:F3} мс",
+                label, plan.Volumes.Count, plan.TotalBlocks, plan.TotalUsedBytes, plan.TotalValue, plan.TotalSeconds * 1000));
+        }
+        VolumePlan firstDp = comparison.Dp.Volumes[0];
+        VolumePlan firstGreedy = comparison.Greedy.Volumes[0];
+        Console.WriteLine(string.Format(c, "  Перший том: цінність ДП {0}, жадібний {1}. Обидва методи зрештою розкладають усі блоки, різниця в тому, що потрапляє в ранні томи.",
+            firstDp.TotalValue, firstGreedy.TotalValue));
+
+        // Перевірка: томи обох розкладок записуються, читаються назад і дають вихідні файли.
+        foreach (PackingPlan plan in new[] { comparison.Dp, comparison.Greedy })
+        {
+            IReadOnlyList<byte[]> volumes = ArchiveWriter.BuildVolumes(prepared, plan);
+            IReadOnlyList<ExtractedFile> restored = ArchiveReader.ReadVolumes(volumes);
+            if (!SameContent(inputs, restored))
+            {
+                throw new InvalidOperationException($"Томи розкладки {plan.Algorithm} не відновили вихідні файли.");
+            }
+        }
+        Write("[OK] Томи обох розкладок записано, прочитано назад і звірено з оригіналами побайтово.", ConsoleColor.Green);
+
+        var experiment = new Experiment
+        {
+            Kind = ExperimentKind.Packing,
+            StartedAtUtc = DateTime.UtcNow,
+            Dataset = Path.GetFullPath(datasetPath),
+            ParametersJson = JsonSerializer.Serialize(new
+            {
+                maxVolumeBytes,
+                blockSize = PackingBlockSize,
+                parseMode = "Lazy",
+                weight = "coded_len + 15",
+                priorities = priorities.Values,
+                prioritiesSource = configPath is null ? "default placeholder" : Path.GetFileName(configPath),
+                capacity = "max_volume_bytes - 41 - 32 - 4 - file table of the volume",
+            }),
+        };
+        AddPackingResults(experiment, comparison.Dp, PackingMethod.Dp);
+        AddPackingResults(experiment, comparison.Greedy, PackingMethod.Greedy);
+
+        IMeasurementStore store = OpenMeasurementStore();
+        if (store.IsEnabled)
+        {
+            store.SaveExperiment(experiment);
+            Write($"[OK] Результати пакування збережено в базі даних (експеримент №{experiment.Id}).", ConsoleColor.Green);
+        }
+        else
+        {
+            Write("[УВАГА] База даних вимкнена: результати виведено лише в консоль.", ConsoleColor.Yellow);
+        }
+    }
+
+    private static void PrintPackingRow(int volume, string label, PackingPlan plan)
+    {
+        if (volume >= plan.Volumes.Count)
+            return;
+
+        VolumePlan v = plan.Volumes[volume];
+        Console.WriteLine(string.Format(CultureInfo.InvariantCulture, "  {0,4} {1,-8} {2,6} {3,12} {4,12} {5,9} {6,9:F3}",
+            volume, label, v.BlockCount, v.UsedBytes, v.CapacityBytes, v.TotalValue, v.ElapsedSeconds * 1000));
+    }
+
+    private static void AddPackingResults(Experiment experiment, PackingPlan plan, PackingMethod method)
+    {
+        foreach (VolumePlan volume in plan.Volumes)
+        {
+            experiment.PackingResults.Add(new PackingResult
+            {
+                Method = method,
+                VolumeIndex = volume.VolumeIndex,
+                CapacityBytes = volume.CapacityBytes,
+                UsedBytes = volume.UsedBytes,
+                TotalValue = volume.TotalValue,
+                BlockCount = volume.BlockCount,
+                ElapsedSeconds = volume.ElapsedSeconds,
+            });
+        }
+    }
+
+    // ------------------------------------------------------------------
     // Дії
     // ------------------------------------------------------------------
 
-    private static void PackFiles(string archivePath, string[] paths, int blockSize)
+    /// <summary>pack &lt;archive&gt; [--volume-size N] файл... : розбирає параметри командного рядка.</summary>
+    private static void PackCommand(string[] args)
+    {
+        long volumeSize = 0;
+        var paths = new List<string>();
+        for (int i = 2; i < args.Length; i++)
+        {
+            if (args[i] == "--volume-size" && i + 1 < args.Length)
+            {
+                i++;
+                if (!long.TryParse(args[i], NumberStyles.None, CultureInfo.InvariantCulture, out volumeSize) || volumeSize <= 0)
+                {
+                    throw new ArgumentException("--volume-size має бути додатним цілим числом (байт).");
+                }
+            }
+            else
+            {
+                paths.Add(args[i]);
+            }
+        }
+        if (paths.Count == 0)
+        {
+            throw new ArgumentException("Не вказано жодного файлу для архіву.");
+        }
+        PackFiles(args[1], [.. paths], FormatConstants.DefaultBlockSize, volumeSize);
+    }
+
+    /// <summary>
+    /// Запаковує файли: аналізатор обирає стратегію для кожного, шум і стиснене йдуть як є, решта кодується LZ77 + Гаффманом.
+    /// Якщо задано розмір тому, блоки розкладає по томах ДП-рюкзак; томи називаються назва.partN.arc.
+    /// </summary>
+    private static void PackFiles(string archivePath, string[] paths, int blockSize, long volumeSize = 0)
     {
         var inputs = new List<ArchiveInput>();
         foreach (string path in paths)
@@ -392,22 +615,49 @@ internal static class ConsoleApp
             inputs.Add(new ArchiveInput(Path.GetFileName(path), File.ReadAllBytes(path)));
         }
 
-        byte[] archive = new ArchiveWriter(blockSize).Build(inputs);
         if (Directory.Exists(archivePath))
         {
             archivePath = Path.Combine(archivePath, "archive.arc");
         }
-        File.WriteAllBytes(archivePath, archive);
+
+        var writer = new ArchiveWriter(blockSize, new FileAnalyzer());
+        IReadOnlyList<PreparedFile> prepared = writer.Prepare(inputs);
+        IReadOnlyList<byte[]> volumes;
+        var outputs = new List<string>();
+        if (volumeSize > 0)
+        {
+            PackingPlan plan = VolumePacker.Pack(prepared, volumeSize, PackingAlgorithm.Dp);
+            volumes = ArchiveWriter.BuildVolumes(prepared, plan);
+            string stem = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(archivePath)) ?? ".", Path.GetFileNameWithoutExtension(archivePath));
+            string extension = Path.GetExtension(archivePath).Length == 0 ? ".arc" : Path.GetExtension(archivePath);
+            for (int i = 0; i < volumes.Count; i++)
+            {
+                outputs.Add($"{stem}.part{i + 1}{extension}");
+            }
+        }
+        else
+        {
+            volumes = [ArchiveWriter.BuildFromPrepared(prepared)];
+            outputs.Add(archivePath);
+        }
+        for (int i = 0; i < volumes.Count; i++)
+        {
+            File.WriteAllBytes(outputs[i], volumes[i]);
+        }
 
         // Одразу читаємо назад і порівнюємо з оригіналом.
-        IReadOnlyList<ExtractedFile> restored = ArchiveReader.Read(archive);
+        IReadOnlyList<ExtractedFile> restored = ArchiveReader.ReadVolumes(volumes);
         bool identical = SameContent(inputs, restored);
 
         long originalSize = inputs.Sum(i => (long)i.Data.Length);
+        long archiveSize = volumes.Sum(v => (long)v.Length);
         Console.WriteLine();
-        Write($"[OK] Архів записано: {Path.GetFullPath(archivePath)}", ConsoleColor.Green);
-        PrintFileTable(restored, blockSize);
-        Console.WriteLine($"Вихідний розмір: {originalSize} байт, архів: {archive.Length} байт, службові дані: {archive.Length - originalSize} байт.");
+        foreach (string output in outputs)
+        {
+            Write($"[OK] Архів записано: {Path.GetFullPath(output)}", ConsoleColor.Green);
+        }
+        PrintPreparedTable(prepared);
+        Console.WriteLine($"Вихідний розмір: {originalSize} байт, архів: {archiveSize} байт у {volumes.Count} том(ах), різниця: {originalSize - archiveSize} байт.");
         if (identical)
         {
             Write("[OK] Перевірка: після читання назад усі файли збігаються побайтово.", ConsoleColor.Green);
@@ -418,9 +668,79 @@ internal static class ConsoleApp
         }
     }
 
+    /// <summary>Що вирішив аналізатор для кожного файлу і скільки він займає після стиснення (без 15-байтових заголовків блоків).</summary>
+    private static void PrintPreparedTable(IReadOnlyList<PreparedFile> files)
+    {
+        Console.WriteLine($"  {"№",3}  {"Ім'я",-26} {"Розмір",10} {"Стиснено",10}  {"Тип",-17} {"Стратегія",-13} {"Блоків (як є / усього)"}");
+        for (int i = 0; i < files.Count; i++)
+        {
+            PreparedFile f = files[i];
+            int stored = f.Blocks.Count(b => b.IsStored);
+            Console.WriteLine($"  {i + 1,3}  {Fit(f.Name, 26),-26} {f.Size,10} {f.CodedSize,10}  {f.Kind,-17} {f.Strategy,-13} {stored} / {f.Blocks.Count}");
+        }
+        if (files.Count == 0)
+        {
+            Console.WriteLine("  (архів порожній)");
+        }
+    }
+
+    /// <summary>
+    /// Томи name.partN.arc: якщо вказано один з них, підхоплюються всі сусідні томи з тією самою назвою.
+    /// Звичайний файл читається як один том.
+    /// </summary>
+    private static List<byte[]> LoadVolumes(string archivePath)
+    {
+        if (!TryParsePartName(Path.GetFileName(archivePath), out string stem, out _, out string extension))
+        {
+            return [File.ReadAllBytes(archivePath)];
+        }
+
+        string directory = Path.GetDirectoryName(Path.GetFullPath(archivePath)) ?? ".";
+        var parts = new List<(int Number, string FullPath)>();
+        foreach (string candidate in Directory.GetFiles(directory))
+        {
+            if (TryParsePartName(Path.GetFileName(candidate), out string candidateStem, out int number, out string candidateExtension)
+                && string.Equals(candidateStem, stem, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(candidateExtension, extension, StringComparison.OrdinalIgnoreCase))
+            {
+                parts.Add((number, candidate));
+            }
+        }
+        parts.Sort((a, b) => a.Number.CompareTo(b.Number));
+        return [.. parts.Select(p => File.ReadAllBytes(p.FullPath))];
+    }
+
+    private static bool TryParsePartName(string fileName, out string stem, out int number, out string extension)
+    {
+        stem = string.Empty;
+        number = 0;
+        extension = string.Empty;
+        int dot = fileName.LastIndexOf('.');
+        if (dot <= 0)
+        {
+            return false;
+        }
+
+        extension = fileName[dot..];
+        string withoutExtension = fileName[..dot];
+        int part = withoutExtension.LastIndexOf(".part", StringComparison.OrdinalIgnoreCase);
+        if (part < 0)
+        {
+            return false;
+        }
+
+        string digits = withoutExtension[(part + ".part".Length)..];
+        if (!int.TryParse(digits, NumberStyles.None, CultureInfo.InvariantCulture, out number))
+        {
+            return false;
+        }
+        stem = withoutExtension[..part];
+        return true;
+    }
+
     private static void UnpackFile(string archivePath, string outputDir)
     {
-        IReadOnlyList<ExtractedFile> files = ArchiveReader.Read(File.ReadAllBytes(archivePath));
+        IReadOnlyList<ExtractedFile> files = ArchiveReader.ReadVolumes(LoadVolumes(archivePath));
 
         // Імена вже перевірені читачем (без шляхів). Наявні файли не перезаписуємо.
         foreach (ExtractedFile file in files)
@@ -445,19 +765,22 @@ internal static class ConsoleApp
 
     private static void ShowInfo(string archivePath)
     {
-        byte[] bytes = File.ReadAllBytes(archivePath);
-        VolumeHeader header = VolumeHeader.Parse(bytes);
-        IReadOnlyList<ExtractedFile> files = ArchiveReader.Read(bytes);
+        List<byte[]> volumes = LoadVolumes(archivePath);
+        IReadOnlyList<ExtractedFile> files = ArchiveReader.ReadVolumes(volumes);
 
-        Console.WriteLine();
-        Write("Заголовок тому (41 байт)", ConsoleColor.Cyan);
-        Console.WriteLine($"  Magic:            {Encoding.ASCII.GetString(FormatConstants.Magic)}");
-        Console.WriteLine($"  Версія формату:   {header.Version}");
-        Console.WriteLine($"  Том:              {header.VolumeNumber} з {header.VolumeCount}");
-        Console.WriteLine($"  Довжина payload:  {header.CiphertextLength} байт");
-        Console.WriteLine($"  Сіль:             {Convert.ToHexString(header.Salt)}");
-        Console.WriteLine($"  Nonce:            {Convert.ToHexString(header.Nonce)}");
-        Console.WriteLine($"  Розмір файлу:     {bytes.Length} байт");
+        foreach (byte[] bytes in volumes)
+        {
+            VolumeHeader header = VolumeHeader.Parse(bytes);
+            Console.WriteLine();
+            Write("Заголовок тому (41 байт)", ConsoleColor.Cyan);
+            Console.WriteLine($"  Magic:            {Encoding.ASCII.GetString(FormatConstants.Magic)}");
+            Console.WriteLine($"  Версія формату:   {header.Version}");
+            Console.WriteLine($"  Том:              {header.VolumeNumber} з {header.VolumeCount}");
+            Console.WriteLine($"  Довжина payload:  {header.CiphertextLength} байт");
+            Console.WriteLine($"  Сіль:             {Convert.ToHexString(header.Salt)}");
+            Console.WriteLine($"  Nonce:            {Convert.ToHexString(header.Nonce)}");
+            Console.WriteLine($"  Розмір файлу:     {bytes.Length} байт");
+        }
         Console.WriteLine();
         Write("Таблиця файлів", ConsoleColor.Cyan);
         PrintFileTable(files, 0);
@@ -869,8 +1192,10 @@ internal static class ConsoleApp
             ErrorCode.E_LENGTH => "архів обрізаний або має зайві байти",
             ErrorCode.E_HMAC => "перевірка автентичності не пройшла",
             ErrorCode.E_PAYLOAD => "внутрішня структура архіву пошкоджена або містить небезпечні дані",
-            ErrorCode.E_CODE => "невідома або ще не підтримувана стратегія стиснення",
+            ErrorCode.E_CODE => "невідома стратегія стиснення або пошкоджені стиснені дані",
             ErrorCode.E_CRC => "вміст файлу змінено: CRC32 не збігається",
+            ErrorCode.E_VOLUMES => "набір томів неповний, містить дублікати або томи з різних архівів",
+            ErrorCode.E_CAPACITY => "блок не вміщується в том: збільште розмір тому або зменште розмір блока",
             _ => "помилка архіву",
         };
         return $"[ПОМИЛКА] {ex.Code}: {meaning}.{Environment.NewLine}  Деталі: {ex.Message}";

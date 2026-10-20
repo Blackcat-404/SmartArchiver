@@ -83,9 +83,10 @@ public static class ProtectedArchive
         }
     }
 
+    /// <summary>Будує і шифрує архів. З аналізатором файли стискаються за його стратегією (див. <see cref="ArchiveWriter"/>).</summary>
     public static byte[] BuildProtected(IReadOnlyList<ArchiveInput> files, string password,
-        int blockSize = FormatConstants.DefaultBlockSize) =>
-        Protect(new ArchiveWriter(blockSize).Build(files), password);
+        int blockSize = FormatConstants.DefaultBlockSize, IFileAnalyzer? analyzer = null) =>
+        Protect(new ArchiveWriter(blockSize, analyzer).Build(files), password);
 
     public static IReadOnlyList<ExtractedFile> ReadProtected(byte[] archive, string password) =>
         ArchiveReader.Read(Unprotect(archive, password));

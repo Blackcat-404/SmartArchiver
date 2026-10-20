@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\SmartArchiver.Archive\SmartArchiver.Archive.csproj" />
+    <ProjectReference Include="..\..\src\SmartArchiver.Analysis\SmartArchiver.Analysis.csproj" />
   </ItemGroup>
 
 </Project>

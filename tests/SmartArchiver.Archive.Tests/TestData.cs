@@ -23,10 +23,23 @@ internal static class TestData
         return FormatConstants.HeaderSize + 4 + entry + blocks * FormatConstants.BlockHeaderSize + size;
     }
 
+    /// <summary>Стиснювані дані: той самий рядок багато разів.</summary>
+    public static byte[] Repetitive(int length)
+    {
+        byte[] bytes = Encoding.ASCII.GetBytes(string.Concat(Enumerable.Repeat("hello world ", length / 12 + 1)));
+        return bytes.AsSpan(0, length).ToArray();
+    }
+
     public static ArchiveException AssertCode(ErrorCode expected, Action action)
     {
         var ex = Assert.Throws<ArchiveException>(action);
         Assert.Equal(expected, ex.Code);
         return ex;
     }
+}
+
+/// <summary>Аналізатор із наперед заданою відповіддю: тести стиснення не залежать від навченої моделі.</summary>
+internal sealed class FixedAnalyzer(FileKind kind, CompressionStrategy strategy) : IFileAnalyzer
+{
+    public FileAnalysis Analyze(ReadOnlySpan<byte> data) => new(kind, 1.0, strategy);
 }
