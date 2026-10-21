@@ -17,7 +17,7 @@ dotnet run --project src/SmartArchiver.Cli     # інтерактивне мен
 | 4 | Демонстрація: порожній файл, файл з 1 байта, великий файл у кількох блоках, небезпечні імена, пошкоджені архіви |
 | 5 | База даних: показує, чи вона ввімкнена, створює схему, якщо її ще немає, і рахує збережені прогони вимірювання Q (налаштування в README) |
 | 6 | Аналіз файлу: ознаки (ентропія, частка друкованих символів, довжина рядків, найчастіші байти, автокореляція), тип файлу за класифікатором і стратегія стиснення |
-| 7 | Експерименти: 1 — порівняння жадібного й лінивого LZ77, 2 — навчання класифікатора типу файлу, 3 — вплив передбачення наступного байта на ентропію і розмір, 4 — ДП-рюкзак проти жадібного пакування томів (результати пишуться в базу, якщо вона ввімкнена) |
+| 7 | Експерименти: 1 — порівняння жадібного й лінивого LZ77, 2 — навчання класифікатора типу файлу, 3 — вплив передбачення наступного байта на ентропію і розмір, 4 — ДП-рюкзак проти жадібного пакування томів, 5 — фіксована стратегія стиснення проти класифікатора (результати пишуться в базу, якщо вона ввімкнена) |
 
 ## Команди без меню
 
@@ -32,5 +32,6 @@ dotnet run --project src/SmartArchiver.Cli -- analyze README.md
 dotnet run --project src/SmartArchiver.Cli -- train-classifier Datasets classifier.json
 dotnet run --project src/SmartArchiver.Cli -- train-predictor Datasets predictor.json
 dotnet run --project src/SmartArchiver.Cli -- prediction-experiment Datasets
+dotnet run --project src/SmartArchiver.Cli -- strategy-experiment Datasets
 dotnet run --project src/SmartArchiver.Cli -- pack-experiment Datasets 65536 [team_config.json]
 ```

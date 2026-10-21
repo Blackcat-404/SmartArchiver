@@ -967,3 +967,102 @@ public byte[] Decode(ReadOnlySpan<byte> encoded)
     return data;
 }
 ```
+
+## 9. Експеримент «фіксована стратегія проти класифікатора»
+
+**Промпт:**
+
+> Архів уже вміє аналізувати файли й стискати їх. Треба обов'язковий експеримент: порівняти фіксовану стратегію стиснення зі стратегією, яку обирає класифікатор, і записати результат у БД. Що саме порівнювати, як правильно міряти час, якщо операції тривають мілісекунди, і як не зробити архів залежним від проєкту аналізу? Дай приклад коду.
+
+**Відповідь:**
+
+**Що порівнювати.** Корисно мати три варіанти, а не два: нижню межу «без стиснення», фіксовану стратегію «завжди стискати» і рішення класифікатора. Нижня межа показує, скільки взагалі дає стиснення, а різниця між двома іншими — внесок саме класифікатора. Для кожного варіанта: розмір архіву, час запакування, час розпакування і чи всі файли відновлено побайтово — якщо ні, решта чисел не має сенсу.
+
+**Залежності.** Порівняння живе там, де запис і читання архіву, а класифікатор передається через контракт `IFileAnalyzer` з Core. Тоді архів не знає про перцептрон, а фіксовану стратегію можна задати маленьким класом, що завжди відповідає «стискати».
+
+**Час.** Операції на файлах у десятки кілобайтів тривають мілісекунди, тож один прогін — переважно шум: перший виклик ще й платить за JIT-компіляцію. Стандартний прийом — один «розігрівальний» прогін, який не рахується, потім кілька повторів і медіана: вона, на відміну від середнього, не чутлива до одиничного викиду (наприклад, збирання сміття посеред виміру).
+
+**Чого чекати.** Виграш класифікатора в розмірі може бути нульовим, якщо архіватор і так зберігає як є блоки, яким стиснення не допомогло: тоді «не стискати» економить лише спробу стиснення, тобто час. Такий результат — теж результат; його треба показати й пояснити, де класифікатор може допомогти більше (дорогий розбір, великі вже стиснені файли).
+
+Приклад: прогін з розігрівом і медіаною.
+
+```csharp
+public static IReadOnlyList<StrategyMeasurement> Run(
+    IReadOnlyList<GroupedFile> files, IFileAnalyzer classifier, int blockSize = FormatConstants.DefaultBlockSize,
+    int repeats = 5)
+{
+    ArgumentNullException.ThrowIfNull(files);
+    ArgumentNullException.ThrowIfNull(classifier);
+    ArgumentOutOfRangeException.ThrowIfLessThan(repeats, 1);
+
+    var results = new List<StrategyMeasurement>();
+    foreach (IGrouping<int, GroupedFile> group in files.GroupBy(f => f.Group).OrderBy(g => g.Key))
+    {
+        ArchiveInput[] groupFiles = [.. group.Select(f => f.File)];
+        foreach (StrategyVariant variant in Enum.GetValues<StrategyVariant>())
+        {
+            Measure(group.Key, groupFiles, variant, classifier, blockSize);
+            StrategyMeasurement[] runs = [.. Enumerable.Range(0, repeats)
+                .Select(_ => Measure(group.Key, groupFiles, variant, classifier, blockSize))];
+            results.Add(runs[0] with
+            {
+                PackSeconds = Median([.. runs.Select(r => r.PackSeconds)]),
+                UnpackSeconds = Median([.. runs.Select(r => r.UnpackSeconds)]),
+                AllRestored = runs.All(r => r.AllRestored),
+            });
+        }
+    }
+    return results;
+}
+
+/// <summary>Middle value; for an even count, the mean of the two middle values.</summary>
+public static double Median(IReadOnlyList<double> values)
+{
+    ArgumentNullException.ThrowIfNull(values);
+    if (values.Count == 0)
+        throw new ArgumentException("No values.", nameof(values));
+    double[] sorted = [.. values.Order()];
+    int middle = sorted.Length / 2;
+    return sorted.Length % 2 == 1 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+```
+
+Приклад: один вимір — пакування, розпакування, побайтова перевірка.
+
+```csharp
+private static StrategyMeasurement Measure(
+    int group, ArchiveInput[] files, StrategyVariant variant, IFileAnalyzer classifier, int blockSize)
+{
+    // The true group is written as file_type unless the classifier is the one deciding.
+    ArchiveInput[] inputs = variant == StrategyVariant.Classifier
+        ? [.. files.Select(f => f with { Kind = FileKind.Unknown })]
+        : [.. files.Select(f => f with { Kind = (FileKind)group })];
+    IFileAnalyzer? analyzer = variant switch
+    {
+        StrategyVariant.Stored => null,
+        StrategyVariant.Fixed => new AlwaysCompress(),
+        _ => classifier,
+    };
+
+    var watch = Stopwatch.StartNew();
+    byte[] archive = new ArchiveWriter(blockSize, analyzer).Build(inputs);
+    double packSeconds = watch.Elapsed.TotalSeconds;
+
+    watch.Restart();
+    IReadOnlyList<ExtractedFile> restored = ArchiveReader.Read(archive);
+    double unpackSeconds = watch.Elapsed.TotalSeconds;
+
+    bool allRestored = restored.Count == files.Length
+        && files.Zip(restored).All(pair => pair.First.Data.AsSpan().SequenceEqual(pair.Second.Data));
+    return new StrategyMeasurement(
+        group,
+        variant,
+        files.Length,
+        restored.Count(f => f.Strategy == CompressionStrategy.Lz77Huffman),
+        files.Sum(f => (long)f.Data.Length),
+        archive.Length,
+        packSeconds,
+        unpackSeconds,
+        allRestored);
+}
+```
