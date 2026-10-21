@@ -27,6 +27,8 @@ public sealed class SmartArchiverDbContext(DbContextOptions<SmartArchiverDbConte
 
     public DbSet<PredictionResult> PredictionResults => Set<PredictionResult>();
 
+    public DbSet<StrategyResult> StrategyResults => Set<StrategyResult>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<MeasurementRun>(run =>
@@ -65,6 +67,8 @@ public sealed class SmartArchiverDbContext(DbContextOptions<SmartArchiverDbConte
             experiment.HasMany(e => e.TrainingRuns).WithOne(r => r.Experiment)
                 .HasForeignKey(r => r.ExperimentId).OnDelete(DeleteBehavior.Cascade);
             experiment.HasMany(e => e.PredictionResults).WithOne(r => r.Experiment)
+                .HasForeignKey(r => r.ExperimentId).OnDelete(DeleteBehavior.Cascade);
+            experiment.HasMany(e => e.StrategyResults).WithOne(r => r.Experiment)
                 .HasForeignKey(r => r.ExperimentId).OnDelete(DeleteBehavior.Cascade);
             experiment.ToTable(t =>
             {
@@ -110,6 +114,7 @@ public sealed class SmartArchiverDbContext(DbContextOptions<SmartArchiverDbConte
         });
 
         modelBuilder.Entity<PredictionResult>(ConfigurePrediction);
+        modelBuilder.Entity<StrategyResult>(ConfigureStrategy);
     }
 
     private static void ConfigurePrediction(EntityTypeBuilder<PredictionResult> result) => result.ToTable(t =>
@@ -121,6 +126,19 @@ public sealed class SmartArchiverDbContext(DbContextOptions<SmartArchiverDbConte
             "[OriginalEntropy] BETWEEN 0 AND 8 AND [ResidualEntropy] BETWEEN 0 AND 8");
         t.HasCheckConstraint("CK_PredictionResults_Time", "[ElapsedSeconds] >= 0");
     });
+
+    private static void ConfigureStrategy(EntityTypeBuilder<StrategyResult> result)
+    {
+        result.Property(r => r.Variant).HasConversion<string>().HasMaxLength(20);
+        result.ToTable(t =>
+        {
+            t.HasCheckConstraint("CK_StrategyResults_Group", $"[Group] <= {MaxFileType}");
+            t.HasCheckConstraint("CK_StrategyResults_Variant", OneOf<StrategyVariant>("Variant"));
+            t.HasCheckConstraint("CK_StrategyResults_Files", "[FileCount] >= 0 AND [CompressedFiles] BETWEEN 0 AND [FileCount]");
+            t.HasCheckConstraint("CK_StrategyResults_Sizes", "[OriginalBytes] >= 0 AND [ArchiveBytes] >= 0");
+            t.HasCheckConstraint("CK_StrategyResults_Time", "[PackSeconds] >= 0 AND [UnpackSeconds] >= 0");
+        });
+    }
 
     /// <summary>CHECK that an enum stored as text holds one of its names; built from the enum so they cannot drift apart.</summary>
     private static string OneOf<TEnum>(string column) where TEnum : struct, Enum =>

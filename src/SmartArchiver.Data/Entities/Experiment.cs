@@ -14,6 +14,9 @@ public enum ExperimentKind
 
     /// <summary>Next-byte prediction: entropy and compressed size of residuals against the original.</summary>
     Prediction,
+
+    /// <summary>Fixed compression strategy against the strategy chosen by the classifier.</summary>
+    Strategy,
 }
 
 /// <summary>
@@ -44,4 +47,6 @@ public sealed class Experiment
     public List<TrainingRun> TrainingRuns { get; set; } = [];
 
     public List<PredictionResult> PredictionResults { get; set; } = [];
+
+    public List<StrategyResult> StrategyResults { get; set; } = [];
 }

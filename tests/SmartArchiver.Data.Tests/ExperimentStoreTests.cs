@@ -77,6 +77,22 @@ public class ExperimentStoreTests
     }
 
     [DatabaseFact]
+    public void SaveExperiment_Strategy_IsReadBackUnchanged()
+    {
+        using var database = new TestDatabase();
+        var store = MeasurementStore.Open(database.ConnectionString);
+        Experiment strategy = StrategyExperiment();
+
+        store.SaveExperiment(strategy);
+
+        Assert.Equal(
+            strategy.StrategyResults.Select(r => (r.Group, r.Variant, r.FileCount, r.CompressedFiles, r.OriginalBytes,
+                r.ArchiveBytes, r.PackSeconds, r.UnpackSeconds, r.AllRestored)),
+            store.GetExperiment(strategy.Id)!.StrategyResults.OrderBy(r => r.Id).Select(r => (r.Group, r.Variant,
+                r.FileCount, r.CompressedFiles, r.OriginalBytes, r.ArchiveBytes, r.PackSeconds, r.UnpackSeconds, r.AllRestored)));
+    }
+
+    [DatabaseFact]
     public void ListExperiments_ReturnsOnlyThatKind_OldestFirst()
     {
         using var database = new TestDatabase();
@@ -141,6 +157,9 @@ public class ExperimentStoreTests
     [InlineData("prediction group above 6")]
     [InlineData("prediction entropy above 8")]
     [InlineData("prediction negative size")]
+    [InlineData("strategy group above 6")]
+    [InlineData("strategy more compressed files than files")]
+    [InlineData("strategy negative time")]
     public void SaveExperiment_ValueOutsideConstraint_IsRejected(string violation)
     {
         using var database = new TestDatabase();
@@ -158,6 +177,9 @@ public class ExperimentStoreTests
             "prediction group above 6" => With(PredictionExperiment(), e => e.PredictionResults[0].Group = 7),
             "prediction entropy above 8" => With(PredictionExperiment(), e => e.PredictionResults[0].ResidualEntropy = 8.5),
             "prediction negative size" => With(PredictionExperiment(), e => e.PredictionResults[0].PredictedEncodedBytes = -1),
+            "strategy group above 6" => With(StrategyExperiment(), e => e.StrategyResults[0].Group = 7),
+            "strategy more compressed files than files" => With(StrategyExperiment(), e => e.StrategyResults[0].CompressedFiles = 4),
+            "strategy negative time" => With(StrategyExperiment(), e => e.StrategyResults[0].UnpackSeconds = -0.1),
             _ => throw new ArgumentOutOfRangeException(nameof(violation)),
         };
 
@@ -234,6 +256,18 @@ public class ExperimentStoreTests
         [
             new() { Method = PackingMethod.Dp, VolumeIndex = 0, CapacityBytes = 65_000, UsedBytes = 64_950, TotalValue = 37.5, BlockCount = 12, ElapsedSeconds = 0.8 },
             new() { Method = PackingMethod.Greedy, VolumeIndex = 0, CapacityBytes = 65_000, UsedBytes = 61_200, TotalValue = 33, BlockCount = 11, ElapsedSeconds = 0.01 },
+        ];
+        return e;
+    }
+
+    private static Experiment StrategyExperiment()
+    {
+        Experiment e = NewExperiment(ExperimentKind.Strategy);
+        e.StrategyResults =
+        [
+            new() { Group = 0, Variant = StrategyVariant.Stored, FileCount = 3, CompressedFiles = 0, OriginalBytes = 150_000, ArchiveBytes = 150_400, PackSeconds = 0.01, UnpackSeconds = 0.01, AllRestored = true },
+            new() { Group = 0, Variant = StrategyVariant.Fixed, FileCount = 3, CompressedFiles = 3, OriginalBytes = 150_000, ArchiveBytes = 48_000, PackSeconds = 0.4, UnpackSeconds = 0.05, AllRestored = true },
+            new() { Group = 5, Variant = StrategyVariant.Classifier, FileCount = 3, CompressedFiles = 0, OriginalBytes = 76_000, ArchiveBytes = 76_300, PackSeconds = 0.02, UnpackSeconds = 0.01, AllRestored = true },
         ];
         return e;
     }

@@ -63,7 +63,7 @@ namespace SmartArchiver.Data.Migrations
                         {
                             t.HasCheckConstraint("CK_Experiments_Dataset", "LEN([Dataset]) > 0");
 
-                            t.HasCheckConstraint("CK_Experiments_Kind", "[Kind] IN ('Parsing', 'Packing', 'Training', 'Prediction')");
+                            t.HasCheckConstraint("CK_Experiments_Kind", "[Kind] IN ('Parsing', 'Packing', 'Training', 'Prediction', 'Strategy')");
                         });
                 });
 
@@ -310,6 +310,64 @@ namespace SmartArchiver.Data.Migrations
                         });
                 });
 
+            modelBuilder.Entity("SmartArchiver.Data.Entities.StrategyResult", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<bool>("AllRestored")
+                        .HasColumnType("bit");
+
+                    b.Property<long>("ArchiveBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<int>("CompressedFiles")
+                        .HasColumnType("int");
+
+                    b.Property<int>("ExperimentId")
+                        .HasColumnType("int");
+
+                    b.Property<int>("FileCount")
+                        .HasColumnType("int");
+
+                    b.Property<byte>("Group")
+                        .HasColumnType("tinyint");
+
+                    b.Property<long>("OriginalBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<double>("PackSeconds")
+                        .HasColumnType("float");
+
+                    b.Property<double>("UnpackSeconds")
+                        .HasColumnType("float");
+
+                    b.Property<string>("Variant")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExperimentId");
+
+                    b.ToTable("StrategyResults", t =>
+                        {
+                            t.HasCheckConstraint("CK_StrategyResults_Files", "[FileCount] >= 0 AND [CompressedFiles] BETWEEN 0 AND [FileCount]");
+
+                            t.HasCheckConstraint("CK_StrategyResults_Group", "[Group] <= 6");
+
+                            t.HasCheckConstraint("CK_StrategyResults_Sizes", "[OriginalBytes] >= 0 AND [ArchiveBytes] >= 0");
+
+                            t.HasCheckConstraint("CK_StrategyResults_Time", "[PackSeconds] >= 0 AND [UnpackSeconds] >= 0");
+
+                            t.HasCheckConstraint("CK_StrategyResults_Variant", "[Variant] IN ('Stored', 'Fixed', 'Classifier')");
+                        });
+                });
+
             modelBuilder.Entity("SmartArchiver.Data.Entities.TrainingRun", b =>
                 {
                     b.Property<int>("Id")
@@ -409,6 +467,17 @@ namespace SmartArchiver.Data.Migrations
                     b.Navigation("Experiment");
                 });
 
+            modelBuilder.Entity("SmartArchiver.Data.Entities.StrategyResult", b =>
+                {
+                    b.HasOne("SmartArchiver.Data.Entities.Experiment", "Experiment")
+                        .WithMany("StrategyResults")
+                        .HasForeignKey("ExperimentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Experiment");
+                });
+
             modelBuilder.Entity("SmartArchiver.Data.Entities.TrainingRun", b =>
                 {
                     b.HasOne("SmartArchiver.Data.Entities.Experiment", "Experiment")
@@ -427,6 +496,8 @@ namespace SmartArchiver.Data.Migrations
                     b.Navigation("ParsingResults");
 
                     b.Navigation("PredictionResults");
+
+                    b.Navigation("StrategyResults");
 
                     b.Navigation("TrainingRuns");
                 });
