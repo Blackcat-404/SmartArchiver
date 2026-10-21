@@ -7,6 +7,8 @@ using SmartArchiver.Archive;
 using SmartArchiver.Core;
 using SmartArchiver.Data;
 using SmartArchiver.Data.Entities;
+using ArchiveVariant = SmartArchiver.Archive.StrategyVariant;
+using DataVariant = SmartArchiver.Data.Entities.StrategyVariant;
 
 namespace SmartArchiver.Cli;
 
@@ -76,6 +78,9 @@ internal static class ConsoleApp
             case "prediction-experiment" when args.Length <= 2:
                 RunPredictionExperiment(args.Length > 1 ? args[1] : "Datasets");
                 return 0;
+            case "strategy-experiment" when args.Length <= 2:
+                RunStrategyExperiment(args.Length > 1 ? args[1] : "Datasets");
+                return 0;
             case "experiment" when args.Length == 2:
                 RunParsingComparison(args[1]);
                 return 0;
@@ -94,6 +99,7 @@ internal static class ConsoleApp
                 Console.WriteLine("  smartarchiver train-classifier [датасет] [модель.json]  навчити класифікатор (за замовчуванням Datasets)");
                 Console.WriteLine("  smartarchiver train-predictor [датасет] [модель.json]   навчити передбачення наступного байта");
                 Console.WriteLine("  smartarchiver prediction-experiment [датасет]          вплив передбачення на ентропію і розмір");
+                Console.WriteLine("  smartarchiver strategy-experiment [датасет]            фіксована стратегія проти класифікатора");
                 Console.WriteLine("  smartarchiver experiment <тека>            порівняти Greedy та Lazy на Datasets");
                 Console.WriteLine("  smartarchiver pack-experiment [датасет] [місткість тому] [team_config.json]  ДП-рюкзак проти жадібного пакування томів");
                 return 1;
@@ -294,6 +300,7 @@ internal static class ConsoleApp
             Console.WriteLine("  2) Навчити класифікатор типу файлу");
             Console.WriteLine("  3) Вплив передбачення наступного байта");
             Console.WriteLine("  4) ДП-рюкзак проти жадібного пакування томів");
+            Console.WriteLine("  5) Фіксована стратегія стиснення проти класифікатора");
             Console.WriteLine("  0) Повернутися до головного меню");
 
             string? choice = Prompt("Ваш вибір");
@@ -311,11 +318,14 @@ internal static class ConsoleApp
                 case "4":
                     Guard(PackingExperimentInteractive);
                     break;
+                case "5":
+                    Guard(StrategyExperimentInteractive);
+                    break;
                 case "0":
                 case null:
                     return;
                 default:
-                    Write("Невідомий пункт. Введіть число від 0 до 4.", ConsoleColor.Yellow);
+                    Write("Невідомий пункт. Введіть число від 0 до 5.", ConsoleColor.Yellow);
                     break;
             }
         }
@@ -858,6 +868,97 @@ internal static class ConsoleApp
         CompressionStrategy.NoCompression => "без стиснення (зберігається як є)",
         CompressionStrategy.Lz77Huffman => "LZ77 + Гаффман",
         _ => strategy.ToString(),
+    };
+
+    private static void StrategyExperimentInteractive()
+    {
+        string? dataset = Prompt("Каталог із групами 0..6", "Datasets");
+        if (dataset is null)
+            return;
+        RunStrategyExperiment(dataset);
+    }
+
+    /// <summary>
+    /// Пакує кожну групу датасету в архів трьома способами (без стиснення, завжди LZ77 + Гаффман,
+    /// як вирішить класифікатор), розпаковує, порівнює й пише розміри та час у базу.
+    /// </summary>
+    private static void RunStrategyExperiment(string datasetPath)
+    {
+        CultureInfo c = CultureInfo.InvariantCulture;
+        IReadOnlyList<GroupedFile> files = [.. LabeledDataset.ListFiles(datasetPath)
+            .Select(f => new GroupedFile(f.Label, new ArchiveInput(Path.GetFileName(f.FullPath), File.ReadAllBytes(f.FullPath))))];
+
+        Console.WriteLine();
+        Write($"Фіксована стратегія проти класифікатора: {files.Count} файлів, архів на кожну групу", ConsoleColor.Cyan);
+        IReadOnlyList<StrategyMeasurement> results = StrategyComparison.Run(files, new FileAnalyzer());
+
+        Console.WriteLine($"  {"Група",5} {"Варіант",-12} {"Стиснуто",9} {"Було, Б",9} {"Архів, Б",9} {"Запак., с",10} {"Розпак., с",11} {"Відновлено",11}");
+        foreach (StrategyMeasurement r in results)
+        {
+            Console.WriteLine(string.Format(c, "  {0,5} {1,-12} {2,4} з {3,-2} {4,9} {5,9} {6,10:F3} {7,11:F3} {8,11}",
+                r.Group, VariantName(r.Variant), r.CompressedFiles, r.FileCount, r.OriginalBytes, r.ArchiveBytes,
+                r.PackSeconds, r.UnpackSeconds, r.AllRestored ? "так" : "НІ"));
+        }
+
+        Console.WriteLine();
+        foreach (ArchiveVariant variant in Enum.GetValues<ArchiveVariant>())
+        {
+            StrategyMeasurement[] rows = [.. results.Where(r => r.Variant == variant)];
+            Console.WriteLine(string.Format(c, "  Разом {0,-12} архів {1,9} Б, запакування {2,7:F3} с, розпакування {3,7:F3} с",
+                VariantName(variant), rows.Sum(r => r.ArchiveBytes), rows.Sum(r => r.PackSeconds), rows.Sum(r => r.UnpackSeconds)));
+        }
+        if (results.All(r => r.AllRestored))
+            Write("[OK] Усі файли відновлено побайтово в усіх варіантах.", ConsoleColor.Green);
+        else
+            Write("[ПОМИЛКА] Не всі файли відновлено побайтово.", ConsoleColor.Red);
+
+        var experiment = new Experiment
+        {
+            Kind = ExperimentKind.Strategy,
+            StartedAtUtc = DateTime.UtcNow,
+            Dataset = Path.GetFullPath(datasetPath),
+            ParametersJson = JsonSerializer.Serialize(new
+            {
+                blockSize = FormatConstants.DefaultBlockSize,
+                parseMode = "Lazy",
+                archive = "one single-volume archive per group, unencrypted",
+                classifier = "built-in model; trained on two of three files of each group",
+            }),
+        };
+        foreach (StrategyMeasurement r in results)
+        {
+            experiment.StrategyResults.Add(new StrategyResult
+            {
+                Group = (byte)r.Group,
+                Variant = Enum.Parse<DataVariant>(r.Variant.ToString()),
+                FileCount = r.FileCount,
+                CompressedFiles = r.CompressedFiles,
+                OriginalBytes = r.OriginalBytes,
+                ArchiveBytes = r.ArchiveBytes,
+                PackSeconds = r.PackSeconds,
+                UnpackSeconds = r.UnpackSeconds,
+                AllRestored = r.AllRestored,
+            });
+        }
+
+        IMeasurementStore store = OpenMeasurementStore();
+        if (store.IsEnabled)
+        {
+            store.SaveExperiment(experiment);
+            Write($"[OK] Результати збережено в базі даних (експеримент №{experiment.Id}).", ConsoleColor.Green);
+        }
+        else
+        {
+            Write("[УВАГА] База даних вимкнена: результати виведено лише в консоль.", ConsoleColor.Yellow);
+        }
+    }
+
+    private static string VariantName(ArchiveVariant variant) => variant switch
+    {
+        ArchiveVariant.Stored => "без стиснення",
+        ArchiveVariant.Fixed => "фіксована",
+        ArchiveVariant.Classifier => "класифікатор",
+        _ => variant.ToString(),
     };
 
     private static void PredictionExperimentInteractive()
