@@ -15,8 +15,6 @@ public static class ProtectedArchive
         ArgumentNullException.ThrowIfNull(plainArchive);
         ArgumentNullException.ThrowIfNull(password);
         VolumeHeader original = VolumeHeader.Parse(plainArchive);
-        if (original.VolumeCount != 1)
-            throw new ArchiveException(ErrorCode.E_PAYLOAD, "Захист багатотомності підключається окремо.");
         if (plainArchive.LongLength != FormatConstants.HeaderSize + (long)original.CiphertextLength)
             throw new ArchiveException(ErrorCode.E_LENGTH, "Некоректна довжина вихідного архіву.");
         byte[] salt = RandomNumberGenerator.GetBytes(FormatConstants.SaltSize);
@@ -87,6 +85,55 @@ public static class ProtectedArchive
     public static byte[] BuildProtected(IReadOnlyList<ArchiveInput> files, string password,
         int blockSize = FormatConstants.DefaultBlockSize, IFileAnalyzer? analyzer = null) =>
         Protect(new ArchiveWriter(blockSize, analyzer).Build(files), password);
+
+    /// <summary>Шифрує кожен том окремо: незалежні випадкові salt і nonce.</summary>
+    public static IReadOnlyList<byte[]> ProtectVolumes(IReadOnlyList<byte[]> volumes, string password)
+    {
+        ArgumentNullException.ThrowIfNull(volumes);
+        ArgumentNullException.ThrowIfNull(password);
+        if (volumes.Count == 0 || volumes.Count > ushort.MaxValue)
+            throw new ArchiveException(ErrorCode.E_VOLUMES, "Некоректна кількість томів.");
+        var result = new List<byte[]>(volumes.Count);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        for (int i = 0; i < volumes.Count; i++)
+        {
+            VolumeHeader original = VolumeHeader.Parse(volumes[i]);
+            if (original.VolumeNumber != i + 1 || original.VolumeCount != volumes.Count)
+                throw new ArchiveException(ErrorCode.E_VOLUMES, "Невірна послідовність томів.");
+            byte[] encrypted;
+            string identity;
+            do
+            {
+                encrypted = Protect(volumes[i], password);
+                VolumeHeader header = VolumeHeader.Parse(encrypted);
+                identity = Convert.ToHexString(header.Salt) + Convert.ToHexString(header.Nonce);
+            } while (!seen.Add(identity));
+            result.Add(encrypted);
+        }
+        return result;
+    }
+
+    public static IReadOnlyList<byte[]> BuildProtectedVolumes(IReadOnlyList<ArchiveInput> files,
+        string password, VolumeOptions options, int blockSize = FormatConstants.DefaultBlockSize,
+        IFileAnalyzer? analyzer = null) =>
+        ProtectVolumes(new ArchiveWriter(blockSize, analyzer).BuildVolumes(files, options), password);
+
+    public static IReadOnlyList<ExtractedFile> ReadProtectedVolumes(IReadOnlyList<byte[]> volumes, string password)
+    {
+        ArgumentNullException.ThrowIfNull(volumes);
+        ArgumentNullException.ThrowIfNull(password);
+        if (volumes.Count == 0)
+            throw new ArchiveException(ErrorCode.E_VOLUMES, "Немає томів.");
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (byte[] volume in volumes)
+        {
+            VolumeHeader header = VolumeHeader.Parse(volume);
+            string identity = Convert.ToHexString(header.Salt) + Convert.ToHexString(header.Nonce);
+            if (!seen.Add(identity))
+                throw new ArchiveException(ErrorCode.E_VOLUMES, "Повторне використання salt та nonce.");
+        }
+        return ArchiveReader.ReadVolumes(volumes.Select(v => Unprotect(v, password)).ToArray());
+    }
 
     public static IReadOnlyList<ExtractedFile> ReadProtected(byte[] archive, string password) =>
         ArchiveReader.Read(Unprotect(archive, password));
