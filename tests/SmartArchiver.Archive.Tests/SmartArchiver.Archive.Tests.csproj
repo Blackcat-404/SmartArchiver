@@ -3,6 +3,8 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\SmartArchiver.Archive\SmartArchiver.Archive.csproj" />
     <ProjectReference Include="..\..\src\SmartArchiver.Analysis\SmartArchiver.Analysis.csproj" />
+    <!-- Same as in SmartArchiver.Archive.csproj: ErrorCode, ArchiveException, FileKind come from Core. -->
+    <Using Include="SmartArchiver.Core" />
   </ItemGroup>
 
 </Project>
