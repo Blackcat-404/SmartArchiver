@@ -14,7 +14,7 @@ public sealed class AtomicExtractTests : IDisposable
 
     private static IReadOnlyList<byte[]> TwoFiles() =>
         ArchivePipeline.Pack([TestData.File("a.txt", [1, 2, 3]), TestData.File("b.txt", [4, 5, 6])],
-            new PackOptions(Password, new FixedAnalyzer(FileKind.Unknown, CompressionStrategy.None)));
+            new PackOptions(Password, new FixedAnalyzer(FileKind.Unknown, CompressionStrategy.NoCompression)));
 
     [Fact]
     public void Extract_WritesAllFiles_AndLeavesNoStaging()

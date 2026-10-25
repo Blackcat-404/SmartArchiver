@@ -28,7 +28,7 @@ public class PipelineTests
     public void Plaintext_IsNotVisibleInSealedVolume()
     {
         byte[] data = TestData.Repetitive(2_000);
-        byte[] volume = ArchivePipeline.Pack([TestData.File("a.txt", data)], new PackOptions("k", new FixedAnalyzer(FileKind.Text, CompressionStrategy.None)))[0];
+        byte[] volume = ArchivePipeline.Pack([TestData.File("a.txt", data)], new PackOptions("k", new FixedAnalyzer(FileKind.Text, CompressionStrategy.NoCompression)))[0];
 
         Assert.DoesNotContain("hello world", System.Text.Encoding.ASCII.GetString(volume));
     }
@@ -37,7 +37,7 @@ public class PipelineTests
     public void Volumes_AreEncrypted_UnderOneSalt_WithDistinctNonces()
     {
         List<ArchiveInput> files = [.. Enumerable.Range(0, 6).Select(i => TestData.File($"f{i}.bin", TestData.RandomBytes(3000, i + 1)))];
-        var options = new PackOptions("k", new FixedAnalyzer(FileKind.Unknown, CompressionStrategy.None), BlockSize: 1000, MaxVolumeBytes: 5000);
+        var options = new PackOptions("k", new FixedAnalyzer(FileKind.Unknown, CompressionStrategy.NoCompression), BlockSize: 1000, MaxVolumeBytes: 5000);
 
         IReadOnlyList<byte[]> volumes = ArchivePipeline.Pack(files, options);
         var headers = volumes.Select(v => VolumeHeader.Parse(v)).ToList();
@@ -52,7 +52,7 @@ public class PipelineTests
     [Fact]
     public void BlockLargerThanVolume_IsCapacityError()
     {
-        var options = new PackOptions("k", new FixedAnalyzer(FileKind.Unknown, CompressionStrategy.None), BlockSize: 1000, MaxVolumeBytes: 100);
+        var options = new PackOptions("k", new FixedAnalyzer(FileKind.Unknown, CompressionStrategy.NoCompression), BlockSize: 1000, MaxVolumeBytes: 100);
 
         Assert.Equal(ErrorCode.E_CAPACITY,
             Assert.Throws<ArchiveException>(() => ArchivePipeline.Pack([TestData.File("a.bin", TestData.RandomBytes(1000))], options)).Code);

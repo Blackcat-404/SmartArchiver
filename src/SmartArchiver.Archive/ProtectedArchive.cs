@@ -45,17 +45,33 @@ public static class ProtectedArchive
         ArgumentNullException.ThrowIfNull(plainArchive);
         ArgumentNullException.ThrowIfNull(password);
         byte[] salt = RandomNumberGenerator.GetBytes(FormatConstants.SaltSize);
+        salt[0] &= 0x7F;
         using var keys = new KeyCache(password);
         return Seal(plainArchive, salt, RandomNumberGenerator.GetBytes(FormatConstants.NonceSize), keys.For(salt));
     }
 
     /// <summary>Шифрує payload тому заданими ключами й додає HMAC: заголовок(41) | шифротекст | тег(32).</summary>
-    private static byte[] Seal(byte[] plainArchive, byte[] salt, byte[] nonce, (byte[] Enc, byte[] Mac) keys)
+    private static byte[] Seal(byte[] plainArchive, byte[] salt, byte[] nonce, (byte[] Enc, byte[] Mac) keys, int padTo = 0)
     {
         VolumeHeader original = VolumeHeader.Parse(plainArchive);
         if (plainArchive.LongLength != FormatConstants.HeaderSize + (long)original.CiphertextLength)
             throw new ArchiveException(ErrorCode.E_LENGTH, "Некоректна довжина вихідного архіву.");
-        byte[] cipher = ArchiveSecurity.TransformCtr(plainArchive.AsSpan(FormatConstants.HeaderSize), keys.Enc, nonce);
+        byte[] payload = plainArchive.AsSpan(FormatConstants.HeaderSize).ToArray();
+        if (padTo > 0)
+        {
+            if (padTo < 16 || padTo > 1_048_576)
+                throw new ArgumentOutOfRangeException(nameof(padTo));
+            // Authenticated salt marker: a padded volume always has bit 7 set.
+            // Prefix with the original length inside the ciphertext; no cleartext length leakage.
+            byte[] padded = new byte[checked(((payload.Length + 4 + padTo - 1) / padTo) * padTo)];
+            BinaryPrimitives.WriteInt32BigEndian(padded, payload.Length);
+            payload.CopyTo(padded, 4);
+            RandomNumberGenerator.Fill(padded.AsSpan(payload.Length + 4));
+            CryptographicOperations.ZeroMemory(payload);
+            payload = padded;
+        }
+        byte[] cipher = ArchiveSecurity.TransformCtr(payload, keys.Enc, nonce);
+        CryptographicOperations.ZeroMemory(payload);
         var header = new VolumeHeader
         {
             VolumeNumber = original.VolumeNumber,
@@ -94,11 +110,21 @@ public static class ProtectedArchive
             throw new ArchiveException(ErrorCode.E_HMAC, "Неправильний пароль або пошкоджений архів.");
         byte[] plain = ArchiveSecurity.TransformCtr(protectedArchive.AsSpan(FormatConstants.HeaderSize,
             checked((int)header.CiphertextLength)), encKey, header.Nonce);
+        if ((header.Salt[0] & 0x80) != 0)
+        {
+            if (plain.Length < 4) throw new ArchiveException(ErrorCode.E_PAYLOAD, "Пошкоджений padding.");
+            int originalLength = BinaryPrimitives.ReadInt32BigEndian(plain);
+            if (originalLength < 0 || originalLength > plain.Length - 4)
+                throw new ArchiveException(ErrorCode.E_PAYLOAD, "Некоректна довжина padded payload.");
+            byte[] unpadded = plain.AsSpan(4, originalLength).ToArray();
+            CryptographicOperations.ZeroMemory(plain);
+            plain = unpadded;
+        }
         var originalHeader = new VolumeHeader
         {
             VolumeNumber = header.VolumeNumber,
             VolumeCount = header.VolumeCount,
-            CiphertextLength = header.CiphertextLength
+            CiphertextLength = checked((uint)plain.Length)
         };
         byte[] result = new byte[FormatConstants.HeaderSize + plain.Length];
         originalHeader.WriteTo(result);
@@ -115,13 +141,16 @@ public static class ProtectedArchive
     /// Шифрує томи одного архіву: одна сіль і один PBKDF2 на всі томи, а nonce = 8 випадкових байтів архіву
     /// || номер тому (uint32 big-endian), як рекомендує FORMAT_SPEC_P2 (4.2). Nonce тому не повторюється за побудовою.
     /// </summary>
-    public static IReadOnlyList<byte[]> ProtectVolumes(IReadOnlyList<byte[]> volumes, string password)
+    public static IReadOnlyList<byte[]> ProtectVolumes(IReadOnlyList<byte[]> volumes, string password,
+        int padTo = 0)
     {
         ArgumentNullException.ThrowIfNull(volumes);
         ArgumentNullException.ThrowIfNull(password);
         if (volumes.Count == 0 || volumes.Count > ushort.MaxValue)
             throw new ArchiveException(ErrorCode.E_VOLUMES, "Некоректна кількість томів.");
         byte[] salt = RandomNumberGenerator.GetBytes(FormatConstants.SaltSize);
+        salt[0] &= 0x7F;
+        if (padTo > 0) salt[0] |= 0x80;
         byte[] noncePrefix = RandomNumberGenerator.GetBytes(FormatConstants.NonceSize - sizeof(uint));
         using var keys = new KeyCache(password);
         var result = new List<byte[]>(volumes.Count);
@@ -133,15 +162,15 @@ public static class ProtectedArchive
             byte[] nonce = new byte[FormatConstants.NonceSize];
             noncePrefix.CopyTo(nonce, 0);
             BinaryPrimitives.WriteUInt32BigEndian(nonce.AsSpan(noncePrefix.Length), (uint)i);
-            result.Add(Seal(volumes[i], salt, nonce, keys.For(salt)));
+            result.Add(Seal(volumes[i], salt, nonce, keys.For(salt), padTo));
         }
         return result;
     }
 
     public static IReadOnlyList<byte[]> BuildProtectedVolumes(IReadOnlyList<ArchiveInput> files,
         string password, VolumeOptions options, int blockSize = FormatConstants.DefaultBlockSize,
-        IFileAnalyzer? analyzer = null) =>
-        ProtectVolumes(new ArchiveWriter(blockSize, analyzer).BuildVolumes(files, options), password);
+        IFileAnalyzer? analyzer = null, int padTo = 0) =>
+        ProtectVolumes(new ArchiveWriter(blockSize, analyzer).BuildVolumes(files, options), password, padTo);
 
     public static IReadOnlyList<ExtractedFile> ReadProtectedVolumes(IReadOnlyList<byte[]> volumes, string password)
     {
