@@ -87,11 +87,14 @@ internal static class ConsoleApp
             case "pack-experiment" when args.Length <= 4:
                 PackExperimentCommand(args);
                 return 0;
+            case "measure" when args.Length <= 3:
+                MeasureQ(args.Length > 1 ? args[1] : "Datasets", args.Length > 2 ? args[2] : null);
+                return 0;
             default:
                 Console.WriteLine("Використання:");
                 Console.WriteLine("  smartarchiver                            інтерактивне меню");
-                Console.WriteLine("  smartarchiver pack <archive.arc> [--volume-size <байт>] <файл>...  запакувати файли зі стисненням (за потреби кількома томами)");
-                Console.WriteLine("  smartarchiver unpack <archive.arc> <тека>   розпакувати (для томів name.partN.arc достатньо вказати будь-який том)");
+                Console.WriteLine("  smartarchiver pack <archive.arc> [--volume-size <байт>] <файл>...  запакувати: аналіз, стиснення, шифрування, томи");
+                Console.WriteLine("  smartarchiver unpack <archive.arc> <тека>   розпакувати атомарно (для томів name.partN.arc достатньо вказати будь-який том)");
                 Console.WriteLine("  smartarchiver info <archive.arc>            показати вміст");
                 Console.WriteLine("  smartarchiver demo                          автоматична демонстрація");
                 Console.WriteLine("  smartarchiver db                            стан бази даних (створює її, якщо ще немає)");
@@ -102,6 +105,7 @@ internal static class ConsoleApp
                 Console.WriteLine("  smartarchiver strategy-experiment [датасет]            фіксована стратегія проти класифікатора");
                 Console.WriteLine("  smartarchiver experiment <тека>            порівняти Greedy та Lazy на Datasets");
                 Console.WriteLine("  smartarchiver pack-experiment [датасет] [місткість тому] [team_config.json]  ДП-рюкзак проти жадібного пакування томів");
+                Console.WriteLine("  smartarchiver measure [датасет] [team_config.json]  виміряти Q на всьому корпусі, результат у БД");
                 return 1;
         }
     }
@@ -113,8 +117,8 @@ internal static class ConsoleApp
     private static int Interactive()
     {
         Write("==============================================", ConsoleColor.Cyan);
-        Write("  SmartArchiver, чекпоінт 2: формат, стиснення і томи", ConsoleColor.Cyan);
-        Write("  (шифрування підключається окремо)", ConsoleColor.DarkCyan);
+        Write("  SmartArchiver, чекпоінт 3: повний тракт зі стисненням і шифруванням", ConsoleColor.Cyan);
+        Write("  (пароль береться зі змінної SMARTARCHIVER_PASSWORD або вводиться без показу)", ConsoleColor.DarkCyan);
         Write("==============================================", ConsoleColor.Cyan);
 
         while (true)
@@ -301,6 +305,7 @@ internal static class ConsoleApp
             Console.WriteLine("  3) Вплив передбачення наступного байта");
             Console.WriteLine("  4) ДП-рюкзак проти жадібного пакування томів");
             Console.WriteLine("  5) Фіксована стратегія стиснення проти класифікатора");
+            Console.WriteLine("  6) Виміряти Q на всьому корпусі");
             Console.WriteLine("  0) Повернутися до головного меню");
 
             string? choice = Prompt("Ваш вибір");
@@ -321,11 +326,14 @@ internal static class ConsoleApp
                 case "5":
                     Guard(StrategyExperimentInteractive);
                     break;
+                case "6":
+                    Guard(MeasureInteractive);
+                    break;
                 case "0":
                 case null:
                     return;
                 default:
-                    Write("Невідомий пункт. Введіть число від 0 до 5.", ConsoleColor.Yellow);
+                    Write("Невідомий пункт. Введіть число від 0 до 6.", ConsoleColor.Yellow);
                     break;
             }
         }
@@ -457,24 +465,7 @@ internal static class ConsoleApp
             priorities = config.Priorities;
         }
 
-        IReadOnlyList<LabeledFile> corpus = LabeledDataset.ListFiles(datasetPath);
-        if (corpus.Count == 0)
-        {
-            throw new ArgumentException($"У каталозі {datasetPath} немає файлів корпусу (теки 0..6).");
-        }
-
-        var inputs = new List<ArchiveInput>();
-        var names = new HashSet<string>(StringComparer.Ordinal);
-        foreach (LabeledFile file in corpus)
-        {
-            string name = Path.GetFileName(file.Source);
-            if (!names.Add(name))
-            {
-                name = $"{file.Label}_{name}";
-                names.Add(name);
-            }
-            inputs.Add(new ArchiveInput(name, File.ReadAllBytes(file.FullPath)));
-        }
+        (List<ArchiveInput> inputs, _) = LoadCorpus(datasetPath);
 
         Console.WriteLine();
         Write("Аналіз і стиснення файлів корпусу...", ConsoleColor.Cyan);
@@ -583,6 +574,203 @@ internal static class ConsoleApp
     }
 
     // ------------------------------------------------------------------
+    // Вимір Q на всьому корпусі
+    // ------------------------------------------------------------------
+
+    /// <summary>Місткість тому для виміру, поки в team_config.json немає max_volume_bytes: корпус займає кілька томів.</summary>
+    private const long DefaultMeasureVolumeBytes = 262_144;
+
+    /// <summary>Пароль виміру. Це не секрет: вимір не зберігає архіви, а пароль не потрапляє ні в базу, ні в логи.</summary>
+    private const string MeasurementPassword = "algo2026";
+
+    private static void MeasureInteractive()
+    {
+        string? dataset = Prompt("Каталог із групами 0..6", "Datasets");
+        if (dataset is null)
+            return;
+        string? config = Prompt("team_config.json (Enter = стандартні α, β, t_ref і місткість)", "");
+        MeasureQ(dataset, string.IsNullOrEmpty(config) ? null : config);
+    }
+
+    /// <summary>
+    /// Одна команда на весь корпус: кожен файл проходить повний тракт з шифруванням і назад, Q = α·S + β·T,
+    /// прогін і результати по файлах пишуться в MeasurementRuns і MeasurementFileResults, якщо база ввімкнена.
+    /// </summary>
+    private static void MeasureQ(string datasetPath, string? configPath)
+    {
+        CultureInfo c = CultureInfo.InvariantCulture;
+        TeamConfig config = configPath is null
+            ? new TeamConfig(DefaultMeasureVolumeBytes, PackingPriorities.Default)
+            : TeamConfig.Load(configPath);
+        (List<ArchiveInput> inputs, List<byte> groups) = LoadCorpus(datasetPath);
+        var options = new PackOptions(MeasurementPassword, new FileAnalyzer(), MaxVolumeBytes: config.MaxVolumeBytes, Priorities: config.Priorities);
+
+        DateTime started = DateTime.UtcNow;
+        QMeasurement m = CorpusMeasurer.Measure([.. inputs.Select((input, i) => (input, groups[i]))], options, config.Alpha, config.Beta, config.TRefSeconds);
+
+        Console.WriteLine();
+        Console.WriteLine($"  {"Група",5} {"Файлів",7} {"Було, Б",10} {"В архіві, Б",12} {"Відновлено",11}");
+        foreach (IGrouping<byte, FileMeasurement> group in m.Files.GroupBy(f => f.Group).OrderBy(g => g.Key))
+        {
+            Console.WriteLine(string.Format(c, "  {0,5} {1,7} {2,10} {3,12} {4,11}", group.Key, group.Count(),
+                group.Sum(f => f.OriginalBytes), group.Sum(f => f.ArchiveBytes), group.All(f => f.Restored) ? "так" : "НІ"));
+        }
+        Console.WriteLine();
+        Console.WriteLine(string.Format(c, "  B_orig {0} Б, B_arc {1} Б у {2} том(ах), t {3:F3} с", m.OriginalBytes, m.ArchiveBytes, m.Volumes, m.Seconds));
+        Console.WriteLine(string.Format(c, "  S = {0:F4}, T = {1:F4}, Q = {2:F4}  (α = {3}, β = {4}, t_ref = {5} с)",
+            m.Score.S, m.Score.T, m.Score.Q, config.Alpha, config.Beta, config.TRefSeconds));
+        if (configPath is null)
+        {
+            Write("  [УВАГА] α, β, t_ref і місткість тому стандартні (заглушка): справжні задає team_config.json (2-й параметр команди).", ConsoleColor.Yellow);
+        }
+        if (m.AllRestored)
+        {
+            Write("[OK] Усі файли відновлено побайтово.", ConsoleColor.Green);
+        }
+        else
+        {
+            Write("[ПОМИЛКА] Є файли, що не відновилися: Q = 0.", ConsoleColor.Red);
+        }
+
+        IMeasurementStore store = OpenMeasurementStore();
+        if (!store.IsEnabled)
+        {
+            Write("[УВАГА] База даних вимкнена: результати виведено лише в консоль.", ConsoleColor.Yellow);
+            return;
+        }
+
+        var run = new MeasurementRun
+        {
+            StartedAtUtc = started,
+            CommitHash = GitCommit(),
+            Dataset = DatasetName(datasetPath),
+            Alpha = config.Alpha,
+            Beta = config.Beta,
+            TRefSeconds = config.TRefSeconds,
+            ParametersJson = JsonSerializer.Serialize(new
+            {
+                blockSize = options.BlockSize,
+                maxVolumeBytes = config.MaxVolumeBytes,
+                volumes = m.Volumes,
+                packing = "DP knapsack",
+                parseMode = "Lazy",
+                encryption = "AES-256-CTR + HMAC-SHA256, PBKDF2 once per archive",
+                config = configPath is null ? "defaults (placeholder)" : Path.GetFileName(configPath),
+            }),
+            OriginalBytes = m.OriginalBytes,
+            ArchiveBytes = m.ArchiveBytes,
+            ElapsedSeconds = m.Seconds,
+            AllRestored = m.AllRestored,
+            Q = m.Score.Q,
+            Files = [.. m.Files.Select(f => new MeasurementFileResult
+            {
+                Group = f.Group,
+                OriginalBytes = f.OriginalBytes,
+                ArchiveBytes = f.ArchiveBytes,
+                Restored = f.Restored,
+            })],
+        };
+        store.SaveRun(run);
+        Write($"[OK] Прогін №{run.Id} збережено в базі даних (файли без імен, пароль не зберігається).", ConsoleColor.Green);
+    }
+
+    /// <summary>Файли корпусу (теки 0..6) з їхніми групами. Однакові імена з різних груп отримують префікс групи.</summary>
+    private static (List<ArchiveInput> Inputs, List<byte> Groups) LoadCorpus(string datasetPath)
+    {
+        IReadOnlyList<LabeledFile> corpus = LabeledDataset.ListFiles(datasetPath);
+        if (corpus.Count == 0)
+        {
+            throw new ArgumentException($"У каталозі {datasetPath} немає файлів корпусу (теки 0..6).");
+        }
+
+        var inputs = new List<ArchiveInput>();
+        var groups = new List<byte>();
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        foreach (LabeledFile file in corpus)
+        {
+            string name = Path.GetFileName(file.Source);
+            if (!names.Add(name))
+            {
+                name = $"{file.Label}_{name}";
+                names.Add(name);
+            }
+            inputs.Add(new ArchiveInput(name, File.ReadAllBytes(file.FullPath)));
+            groups.Add((byte)file.Label);
+        }
+        return (inputs, groups);
+    }
+
+    private static string DatasetName(string datasetPath)
+    {
+        string name = Path.GetFileName(Path.GetFullPath(datasetPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+        name = name.Length == 0 ? "corpus" : name;
+        return name.Length > 100 ? name[..100] : name;
+    }
+
+    /// <summary>Коротка назва поточного коміту для журналу прогону; null, якщо git недоступний.</summary>
+    private static string? GitCommit()
+    {
+        try
+        {
+            using var git = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("git", "rev-parse --short=12 HEAD")
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+            });
+            string? line = git?.StandardOutput.ReadLine();
+            git?.WaitForExit(2000);
+            return git is { ExitCode: 0 } && !string.IsNullOrWhiteSpace(line) ? line.Trim() : null;
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Пароль береться зі змінної SMARTARCHIVER_PASSWORD (для скриптів) або вводиться без показу на екрані.
+    /// У командний рядок його не передають: він залишився б в історії оболонки.
+    /// </summary>
+    private static string ReadPassword(bool confirm)
+    {
+        string? password = Environment.GetEnvironmentVariable("SMARTARCHIVER_PASSWORD");
+        if (string.IsNullOrEmpty(password))
+        {
+            password = ReadHidden("Пароль");
+            if (confirm && !Console.IsInputRedirected && ReadHidden("Повторіть пароль") != password)
+            {
+                throw new ArgumentException("Паролі не збігаються.");
+            }
+        }
+        return string.IsNullOrEmpty(password) ? throw new ArgumentException("Пароль не може бути порожнім.") : password;
+    }
+
+    private static string ReadHidden(string label)
+    {
+        if (Console.IsInputRedirected)
+        {
+            return Console.ReadLine() ?? string.Empty;
+        }
+
+        Console.Write($"{label}: ");
+        var typed = new StringBuilder();
+        for (ConsoleKeyInfo key = Console.ReadKey(intercept: true); key.Key != ConsoleKey.Enter; key = Console.ReadKey(intercept: true))
+        {
+            if (key.Key == ConsoleKey.Backspace)
+            {
+                typed.Length = Math.Max(0, typed.Length - 1);
+            }
+            else if (!char.IsControl(key.KeyChar))
+            {
+                typed.Append(key.KeyChar);
+            }
+        }
+        Console.WriteLine();
+        return typed.ToString();
+    }
+
+    // ------------------------------------------------------------------
     // Дії
     // ------------------------------------------------------------------
 
@@ -630,14 +818,13 @@ internal static class ConsoleApp
             archivePath = Path.Combine(archivePath, "archive.arc");
         }
 
-        var writer = new ArchiveWriter(blockSize, new FileAnalyzer());
-        IReadOnlyList<PreparedFile> prepared = writer.Prepare(inputs);
-        IReadOnlyList<byte[]> volumes;
+        // Повний тракт: аналіз → блоки → LZ77 → Гаффман → пакування → AES → HMAC → томи.
+        var options = new PackOptions(ReadPassword(confirm: true), new FileAnalyzer(), blockSize, volumeSize);
+        IReadOnlyList<PreparedFile> prepared = ArchivePipeline.Prepare(inputs, options);
+        IReadOnlyList<byte[]> volumes = ArchivePipeline.Seal(prepared, options);
         var outputs = new List<string>();
         if (volumeSize > 0)
         {
-            PackingPlan plan = VolumePacker.Pack(prepared, volumeSize, PackingAlgorithm.Dp);
-            volumes = ArchiveWriter.BuildVolumes(prepared, plan);
             string stem = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(archivePath)) ?? ".", Path.GetFileNameWithoutExtension(archivePath));
             string extension = Path.GetExtension(archivePath).Length == 0 ? ".arc" : Path.GetExtension(archivePath);
             for (int i = 0; i < volumes.Count; i++)
@@ -647,7 +834,6 @@ internal static class ConsoleApp
         }
         else
         {
-            volumes = [ArchiveWriter.BuildFromPrepared(prepared)];
             outputs.Add(archivePath);
         }
         for (int i = 0; i < volumes.Count; i++)
@@ -655,9 +841,9 @@ internal static class ConsoleApp
             File.WriteAllBytes(outputs[i], volumes[i]);
         }
 
-        // Одразу читаємо назад і порівнюємо з оригіналом.
-        IReadOnlyList<ExtractedFile> restored = ArchiveReader.ReadVolumes(volumes);
-        bool identical = SameContent(inputs, restored);
+        // Одразу читаємо назад (з перевіркою HMAC і CRC32) і порівнюємо з оригіналом.
+        ArchiveResult<IReadOnlyList<ExtractedFile>> check = ArchivePipeline.TryUnpack(volumes, options.Password);
+        bool identical = check.Ok && SameContent(inputs, check.Value!);
 
         long originalSize = inputs.Sum(i => (long)i.Data.Length);
         long archiveSize = volumes.Sum(v => (long)v.Length);
@@ -667,7 +853,7 @@ internal static class ConsoleApp
             Write($"[OK] Архів записано: {Path.GetFullPath(output)}", ConsoleColor.Green);
         }
         PrintPreparedTable(prepared);
-        Console.WriteLine($"Вихідний розмір: {originalSize} байт, архів: {archiveSize} байт у {volumes.Count} том(ах), різниця: {originalSize - archiveSize} байт.");
+        Console.WriteLine($"Вихідний розмір: {originalSize} байт, архів (зашифрований): {archiveSize} байт у {volumes.Count} том(ах), різниця: {originalSize - archiveSize} байт.");
         if (identical)
         {
             Write("[OK] Перевірка: після читання назад усі файли збігаються побайтово.", ConsoleColor.Green);
@@ -750,33 +936,19 @@ internal static class ConsoleApp
 
     private static void UnpackFile(string archivePath, string outputDir)
     {
-        IReadOnlyList<ExtractedFile> files = ArchiveReader.ReadVolumes(LoadVolumes(archivePath));
-
-        // Імена вже перевірені читачем (без шляхів). Наявні файли не перезаписуємо.
-        foreach (ExtractedFile file in files)
-        {
-            if (File.Exists(Path.Combine(outputDir, file.Name)))
-            {
-                throw new IOException($"Файл уже існує: {file.Name}. Оберіть іншу теку.");
-            }
-        }
-
-        Directory.CreateDirectory(outputDir);
-        foreach (ExtractedFile file in files)
-        {
-            File.WriteAllBytes(Path.Combine(outputDir, file.Name), file.Data);
-        }
+        // Атомарно: або всі файли, або жодного; наявні файли не перезаписуються (див. ArchivePipeline.Extract).
+        IReadOnlyList<ExtractedFile> files = ArchivePipeline.Extract(LoadVolumes(archivePath), ReadPassword(confirm: false), outputDir);
 
         Console.WriteLine();
         Write($"[OK] Розпаковано {files.Count} файл(ів) у {Path.GetFullPath(outputDir)}", ConsoleColor.Green);
         PrintFileTable(files, 0);
-        Write("[OK] CRC32 кожного файлу збігається.", ConsoleColor.Green);
+        Write("[OK] HMAC і CRC32 кожного файлу збігаються.", ConsoleColor.Green);
     }
 
     private static void ShowInfo(string archivePath)
     {
         List<byte[]> volumes = LoadVolumes(archivePath);
-        IReadOnlyList<ExtractedFile> files = ArchiveReader.ReadVolumes(volumes);
+        IReadOnlyList<ExtractedFile> files = ArchivePipeline.Unpack(volumes, ReadPassword(confirm: false));
 
         foreach (byte[] bytes in volumes)
         {
@@ -794,7 +966,7 @@ internal static class ConsoleApp
         Console.WriteLine();
         Write("Таблиця файлів", ConsoleColor.Cyan);
         PrintFileTable(files, 0);
-        Write("[OK] Структура коректна, CRC32 усіх файлів збігається.", ConsoleColor.Green);
+        Write("[OK] HMAC вірний, структура коректна, CRC32 усіх файлів збігається.", ConsoleColor.Green);
     }
 
     private static void ShowDatabase()
@@ -1244,20 +1416,15 @@ internal static class ConsoleApp
     // Допоміжне
     // ------------------------------------------------------------------
 
+    /// <summary>Порядок файлів у томах може відрізнятися від вхідного, тому звірка йде за іменем.</summary>
     private static bool SameContent(List<ArchiveInput> inputs, IReadOnlyList<ExtractedFile> restored)
     {
         if (inputs.Count != restored.Count)
         {
             return false;
         }
-        for (int i = 0; i < inputs.Count; i++)
-        {
-            if (inputs[i].Name != restored[i].Name || !inputs[i].Data.AsSpan().SequenceEqual(restored[i].Data.AsSpan()))
-            {
-                return false;
-            }
-        }
-        return true;
+        Dictionary<string, byte[]> byName = restored.ToDictionary(f => f.Name, f => f.Data, StringComparer.Ordinal);
+        return inputs.TrueForAll(i => byName.TryGetValue(i.Name, out byte[]? data) && data.AsSpan().SequenceEqual(i.Data));
     }
 
     /// <summary>Таблиця файлів. Якщо blockSize більший за нуль, додається стовпець із кількістю блоків.</summary>

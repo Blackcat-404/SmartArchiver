@@ -47,4 +47,27 @@ public class TeamConfigTests
     {
         Assert.Equal(PackingPriorities.KindCount, PackingPriorities.Default.Values.Count);
     }
+
+    [Fact]
+    public void Parse_QParameters_HaveDefaults_AndCanBeSet()
+    {
+        const string priorities = "\"пріоритети_типів\": [1,2,3,4,5,6,7]";
+
+        TeamConfig defaults = TeamConfig.Parse("{ \"max_volume_bytes\": 1000, " + priorities + " }");
+        TeamConfig custom = TeamConfig.Parse("{ \"max_volume_bytes\": 1000, \"alpha\": 0.7, \"beta\": 0.3, \"t_ref\": 2.5, " + priorities + " }");
+
+        Assert.Equal((0.5, 0.5, 1.0), (defaults.Alpha, defaults.Beta, defaults.TRefSeconds));
+        Assert.Equal((0.7, 0.3, 2.5), (custom.Alpha, custom.Beta, custom.TRefSeconds));
+    }
+
+    [Theory]
+    [InlineData("\"t_ref\": 0")]
+    [InlineData("\"alpha\": -1")]
+    [InlineData("\"beta\": \"x\"")]
+    public void Parse_InvalidQParameters_Throw(string field)
+    {
+        string json = "{ \"max_volume_bytes\": 1000, " + field + ", \"пріоритети_типів\": [1,2,3,4,5,6,7] }";
+
+        Assert.Throws<ArgumentException>(() => TeamConfig.Parse(json));
+    }
 }

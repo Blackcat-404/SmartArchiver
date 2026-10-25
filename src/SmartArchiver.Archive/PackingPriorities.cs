@@ -78,11 +78,20 @@ public sealed class PackingPriorities
     }
 }
 
-/// <summary>Параметри пакування з team_config.json: місткість тому й пріоритети типів.</summary>
-public sealed record TeamConfig(long MaxVolumeBytes, PackingPriorities Priorities)
+/// <summary>
+/// Параметри з team_config.json: місткість тому, пріоритети типів і ваги метрики Q.
+/// Alpha, Beta і TRefSeconds (ключі alpha, beta, t_ref) необов'язкові; значення за замовчуванням це ЗАГЛУШКИ,
+/// справжні числа однакові для всіх команд і беруться з team_config.json.
+/// </summary>
+public sealed record TeamConfig(
+    long MaxVolumeBytes,
+    PackingPriorities Priorities,
+    double Alpha = 0.5,
+    double Beta = 0.5,
+    double TRefSeconds = 1.0)
 {
     /// <summary>
-    /// Читає max_volume_bytes і пріоритети_типів. Точну форму файлу команді не надали,
+    /// Читає max_volume_bytes і пріоритети_типів, а також alpha, beta, t_ref, якщо вони є. Точну форму файлу команді не надали,
     /// тому пріоритети приймаються і масивом, і об'єктом (див. <see cref="PackingPriorities.FromJson"/>).
     /// </summary>
     public static TeamConfig Parse(string json)
@@ -102,7 +111,13 @@ public sealed record TeamConfig(long MaxVolumeBytes, PackingPriorities Prioritie
             if (!root.TryGetProperty("пріоритети_типів", out JsonElement priorities))
                 throw new ArgumentException("У team_config.json немає пріоритети_типів.");
 
-            return new TeamConfig(maxBytes, PackingPriorities.FromJson(priorities));
+            var defaults = new TeamConfig(maxBytes, PackingPriorities.Default);
+            double alpha = Number(root, "alpha", defaults.Alpha);
+            double beta = Number(root, "beta", defaults.Beta);
+            double tRef = Number(root, "t_ref", defaults.TRefSeconds);
+            if (tRef <= 0)
+                throw new ArgumentException("t_ref у team_config.json має бути додатним.");
+            return new TeamConfig(maxBytes, PackingPriorities.FromJson(priorities), alpha, beta, tRef);
         }
         catch (JsonException ex)
         {
@@ -111,4 +126,13 @@ public sealed record TeamConfig(long MaxVolumeBytes, PackingPriorities Prioritie
     }
 
     public static TeamConfig Load(string path) => Parse(File.ReadAllText(path));
+
+    private static double Number(JsonElement root, string name, double fallback)
+    {
+        if (!root.TryGetProperty(name, out JsonElement value))
+            return fallback;
+        if (value.ValueKind != JsonValueKind.Number || !value.TryGetDouble(out double number) || number < 0)
+            throw new ArgumentException($"{name} у team_config.json має бути невід'ємним числом.");
+        return number;
+    }
 }

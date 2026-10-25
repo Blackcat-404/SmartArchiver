@@ -5,6 +5,8 @@
     <ProjectReference Include="..\..\src\SmartArchiver.Analysis\SmartArchiver.Analysis.csproj" />
     <!-- Same as in SmartArchiver.Archive.csproj: ErrorCode, ArchiveException, FileKind come from Core. -->
     <Using Include="SmartArchiver.Core" />
+    <!-- Real bad_*.arc and expected_failures.json from the teacher, see Bad/README.md. -->
+    <None Include="Bad\**" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

@@ -46,7 +46,10 @@ dotnet run --project src/SmartArchiver.Cli -- pack test.arc a.txt b.png
 dotnet run --project src/SmartArchiver.Cli -- pack test.arc --volume-size 65536 a.txt b.png   # томи test.part1.arc, test.part2.arc...
 dotnet run --project src/SmartArchiver.Cli -- unpack test.part1.arc out                        # сусідні томи підхоплюються самі
 dotnet run --project src/SmartArchiver.Cli -- pack-experiment Datasets 65536                   # ДП-рюкзак проти жадібного
+dotnet run --project src/SmartArchiver.Cli -- measure Datasets [team_config.json]              # Q на всьому корпусі, результат у БД
 ```
+
+Чекпоінт 3: `pack` і `unpack` проходять повний тракт **аналіз → блоки → LZ77 → Гаффман → пакування → AES-256-CTR → HMAC-SHA256 → томи** (`ArchivePipeline`). Пароль береться зі змінної `SMARTARCHIVER_PASSWORD` або вводиться без показу. Пошкоджений архів дає код `E_MAGIC`, `E_LENGTH`, `E_HMAC`, `E_PAYLOAD`, `E_CODE` або `E_CRC` (`ArchivePipeline.TryUnpack`, без винятків). `unpack` атомарний: усе перевіряється в пам'яті, наявні файли не перезаписуються, часткового результату на диску немає. `measure` проганяє весь корпус через тракт і рахує `Q = α·S + β·T`; α, β, `t_ref` і місткість тому беруться з `team_config.json` (`alpha`, `beta`, `t_ref`, `max_volume_bytes`), а без нього це заглушки. Рішення 35–38 у `docs/decisions.md`.
 
 З `--volume-size` блоки розкладає по томах ДП-рюкзак: вага блока `coded_len + 15`, місткість тому `max_volume_bytes − 41 − 32 − 4 − таблиця файлів`, цінність за типом файлу. Блок, що не влазить у том, дає помилку `E_CAPACITY`. Пріоритети типів поки стандартні (заглушка), справжні читаються з `team_config.json` (`TeamConfig.Load`). Деталі і відмінності від специфікації — `docs/decisions.md`, рішення 29–33.
 
