@@ -8,5 +8,8 @@
     <!-- Real bad_*.arc and expected_failures.json from the teacher, see Bad/README.md. -->
     <None Include="Bad\**" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
-
+  <ItemGroup>
+    <Compile Include="../SmartArchiver.Compression.Tests/CorpusRoundTripTests.cs"
+             Link="CorpusRoundTripTests.cs" />
+  </ItemGroup>
 </Project>

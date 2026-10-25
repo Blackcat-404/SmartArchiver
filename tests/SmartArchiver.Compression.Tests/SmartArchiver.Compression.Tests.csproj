@@ -4,5 +4,7 @@
     <ProjectReference Include="..\..\src\SmartArchiver.Compression\SmartArchiver.Compression.csproj" />
     <ProjectReference Include="..\..\src\SmartArchiver.Archive\SmartArchiver.Archive.csproj" />
   </ItemGroup>
-
+  <ItemGroup>
+    <Compile Remove="CorpusRoundTripTests.cs" />
+  </ItemGroup>
 </Project>
