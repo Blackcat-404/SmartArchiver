@@ -128,7 +128,7 @@ public static class Zip9Benchmark
         return results;
     }
 
-    private static long CreateZipAndVerify(IReadOnlyList<SourceFile> sources)
+    private static long CreateZipAndVerify(List<SourceFile> sources)
     {
         // ZIP never touches the file system; source names and bytes match SARC input.
         using var buffer = new MemoryStream();
