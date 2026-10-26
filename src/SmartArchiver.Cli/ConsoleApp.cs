@@ -306,6 +306,7 @@ internal static class ConsoleApp
             Console.WriteLine("  4) ДП-рюкзак проти жадібного пакування томів");
             Console.WriteLine("  5) Фіксована стратегія стиснення проти класифікатора");
             Console.WriteLine("  6) Виміряти Q на всьому корпусі");
+            Console.WriteLine("  7) Ітеративний DP + Huffman (D1 №19)");
             Console.WriteLine("  0) Повернутися до головного меню");
 
             string? choice = Prompt("Ваш вибір");
@@ -328,6 +329,9 @@ internal static class ConsoleApp
                     break;
                 case "6":
                     Guard(MeasureInteractive);
+                    break;
+                case "7":
+                    Guard(IterativeDpExperimentInteractive);
                     break;
                 case "0":
                 case null:
@@ -1317,6 +1321,136 @@ internal static class ConsoleApp
             Write("[УВАГА] База даних вимкнена: результати виведено лише в консоль.", ConsoleColor.Yellow);
         }
     }
+
+    /// <summary>
+    /// Пакує кожен файл у датасеті ітеративним DP + Гаффманом, розпаковує, порівнює й пише розміри та час у базу.
+    /// </summary>
+    private static void IterativeDpExperimentInteractive()
+    {
+        string? dataset = Prompt(
+            "Каталог корпусу 0..6",
+            "Datasets");
+
+        if (dataset is null)
+            return;
+
+        const int blockSize = 8192;
+        const int maxIterations = 3;
+        const int maxChain = 32;
+
+        DateTime startedAtUtc = DateTime.UtcNow;
+
+        Write(
+            "Запускаємо ітеративний DP + Huffman...",
+            ConsoleColor.Cyan);
+
+        var report = IterativeDpBenchmark.RunDirectory(
+            dataset,
+            blockSize: blockSize,
+            maxIterations: maxIterations,
+            maxChain: maxChain,
+            progress: p => Console.Write(
+                $"\rГрупа {p.Group}, {p.File}: " +
+                $"блок {p.BlocksDone}/{p.BlocksTotal}     "));
+
+        Console.WriteLine();
+
+        long baseline = report.Files.Sum(f => f.BaselineBytes);
+        long optimized = report.Files.Sum(f => f.OptimizedBytes);
+        long gain = baseline - optimized;
+
+        double percent = baseline == 0
+            ? 0
+            : 100.0 * gain / baseline;
+
+        Write("=== Результати D1 №19 ===", ConsoleColor.Cyan);
+
+        Console.WriteLine($"Файлів: {report.Files.Count}");
+        Console.WriteLine($"Початковий DP: {baseline} байт");
+        Console.WriteLine($"Ітеративний DP: {optimized} байт");
+        Console.WriteLine($"Економія: {gain} байт ({percent:F2}%)");
+
+        var iterations = report.Iterations
+            .GroupBy(r => r.Iteration)
+            .OrderBy(g => g.Key)
+            .Select(g => new
+            {
+                iteration = g.Key,
+                blocks = g.Count(),
+                gainBytes = g.Sum(r => (long)r.GainBytes),
+                elapsedSeconds = g.Sum(r => r.ElapsedSeconds)
+            })
+            .ToArray();
+
+        Console.WriteLine();
+        Write("=== Виграш за ітераціями ===", ConsoleColor.Cyan);
+
+        foreach (var iteration in iterations)
+        {
+            Console.WriteLine(
+                $"Ітерація {iteration.iteration}: " +
+                $"виграш {iteration.gainBytes} байт, " +
+                $"час {iteration.elapsedSeconds:F4} с");
+        }
+
+        // Зберігаємо результати через наявну систему БД.
+        var experiment = new Experiment
+        {
+            Kind = ExperimentKind.Parsing,
+            StartedAtUtc = startedAtUtc,
+            Dataset = Path.GetFullPath(dataset),
+
+            ParametersJson = JsonSerializer.Serialize(new
+            {
+                experimentType = "IterativeDp",
+
+                blockSize,
+                maxIterations,
+                maxChain,
+
+                filesCount = report.Files.Count,
+                blocksCount = report.Files.Sum(f => f.Blocks),
+
+                baselineBytes = baseline,
+                optimizedBytes = optimized,
+                gainBytes = gain,
+                gainPercent = percent,
+
+                iterations,
+
+                files = report.Files.Select(f => new
+                {
+                    group = f.Group,
+                    file = f.File,
+                    rawBytes = f.RawBytes,
+                    blocks = f.Blocks,
+                    baselineBytes = f.BaselineBytes,
+                    optimizedBytes = f.OptimizedBytes,
+                    gainBytes = f.GainBytes
+                }).ToArray()
+            })
+        };
+
+        IMeasurementStore store = OpenMeasurementStore();
+
+        if (store.IsEnabled)
+        {
+            store.SaveExperiment(experiment);
+
+            Write(
+                $"[OK] Експеримент №{experiment.Id} " +
+                "збережено в базі даних.",
+                ConsoleColor.Green);
+        }
+        else
+        {
+            Write(
+                "[УВАГА] База даних вимкнена. " +
+                "Результати показано в консолі.",
+                ConsoleColor.Yellow);
+        }
+    }
+
 
     private static string ByteLabel(byte b) => b switch
     {

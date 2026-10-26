@@ -5,7 +5,10 @@ public enum Lz77ParseMode
 {
     Greedy,
     Lazy,
-    Dp
+    Dp,
+    Iterative,
+    // Тимчасовий псевдонім для сумісності з кодом, де вже було IterativeDp.
+    IterativeDp = Iterative
 }
 
 /// <summary>
@@ -35,6 +38,11 @@ public static class Lz77CompressionService
             throw new ArgumentException("Порожній блок не кодується.", nameof(data));
         if (!Enum.IsDefined(mode))
             throw new ArgumentOutOfRangeException(nameof(mode));
+
+        // IterativeParser вже повертає готові стиснені байти;
+        // не повторюємо Huffman-кодування зайвий раз.
+        if (mode == Lz77ParseMode.Iterative)
+            return IterativeParser.Optimize(data).Encoded;
 
         IReadOnlyList<Lz77Token> tokens = mode switch
         {

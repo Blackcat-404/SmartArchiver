@@ -12,4 +12,8 @@
     <Compile Include="../SmartArchiver.Compression.Tests/CorpusRoundTripTests.cs"
              Link="CorpusRoundTripTests.cs" />
   </ItemGroup>
+  <ItemGroup>
+    <Compile Include="../SmartArchiver.Compression.Tests/IterativeArchiveTests.cs"
+             Link="IterativeArchiveTests.cs" />
+  </ItemGroup>
 </Project>
