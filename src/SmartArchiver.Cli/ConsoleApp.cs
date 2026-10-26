@@ -307,6 +307,7 @@ internal static class ConsoleApp
             Console.WriteLine("  5) Фіксована стратегія стиснення проти класифікатора");
             Console.WriteLine("  6) Виміряти Q на всьому корпусі");
             Console.WriteLine("  7) Ітеративний DP + Huffman (D1 №19)");
+            Console.WriteLine("  8) Порівняння арифметичного кодування з Гаффманом");
             Console.WriteLine("  0) Повернутися до головного меню");
 
             string? choice = Prompt("Ваш вибір");
@@ -332,6 +333,9 @@ internal static class ConsoleApp
                     break;
                 case "7":
                     Guard(IterativeDpExperimentInteractive);
+                    break;
+                case "8":
+                    Guard(ArithmeticExperimentInteractive);
                     break;
                 case "0":
                 case null:
@@ -1451,6 +1455,109 @@ internal static class ConsoleApp
         }
     }
 
+    private static void ArithmeticExperimentInteractive()
+    {
+        string? dataset = Prompt("Каталог корпусу 0..6", "Datasets");
+        if (dataset is null)
+            return;
+
+        const int blockSize = 65536;
+        const int maxIterations = 3;
+        const int maxChain = 256;
+        DateTime startedAtUtc = DateTime.UtcNow;
+
+        Write("Порівняння Huffman і арифметичного кодування на однакових LZ77-токенах...",
+            ConsoleColor.Cyan);
+
+        var report = ArithmeticBenchmark.RunDirectory(
+            dataset, blockSize, maxIterations, maxChain,
+            progress: p => Console.Write(
+                $"\rГрупа {p.Group}, {p.File}: блок {p.BlocksDone}/{p.BlocksTotal}    "));
+
+        Console.WriteLine();
+        Console.WriteLine();
+        Write("=== CP3 №3: Huffman vs Arithmetic ===", ConsoleColor.Cyan);
+        Console.WriteLine($"Файлів: {report.Files.Count}");
+        Console.WriteLine($"Початкових байтів: {report.RawBytes}");
+        Console.WriteLine($"Huffman повний: {report.HuffmanBytes} байт");
+        Console.WriteLine($"Arithmetic повний: {report.ArithmeticBytes} байт");
+        Console.WriteLine($"Різниця: {report.TotalSavedBytes:+#;-#;0} байт ({report.TotalSavedPercent:+0.00;-0.00;0.00}%)");
+        Console.WriteLine();
+        Console.WriteLine($"Huffman payload: {report.HuffmanPayloadBytes} байт");
+        Console.WriteLine($"Arithmetic payload: {report.ArithmeticPayloadBytes} байт");
+        Console.WriteLine($"Різниця payload: {report.PayloadSavedBytes:+#;-#;0} байт");
+        Console.WriteLine("Додатна різниця = арифметичне кодування менше, від'ємна = Huffman менше.");
+        Console.WriteLine("Усі блоки перевірено на точний round-trip; архівний формат не змінено.");
+
+        foreach (var group in report.Files.GroupBy(f => f.Group).OrderBy(g => g.Key))
+        {
+            long h = group.Sum(f => f.HuffmanBytes);
+            long a = group.Sum(f => f.ArithmeticBytes);
+            long hp = group.Sum(f => f.HuffmanPayloadBytes);
+            long ap = group.Sum(f => f.ArithmeticPayloadBytes);
+            Console.WriteLine($"Група {group.Key}: Huffman={h} Б, Arithmetic={a} Б, " +
+                $"різниця={h - a:+#;-#;0} Б; різниця payload={hp - ap:+#;-#;0} Б");
+        }
+
+        // Стара система збереження: один Experiment -> один JSON у ParametersJson.
+        // Нові таблиці, EF міграції та CSV НЕ потрібні.
+        var experiment = new Experiment
+        {
+            Kind = ExperimentKind.Parsing,
+            StartedAtUtc = startedAtUtc,
+            Dataset = "corpus",
+            ParametersJson = JsonSerializer.Serialize(new
+            {
+                experimentType = "ArithmeticVsHuffman",
+                datasetPath = Path.GetFullPath(dataset),
+                blockSize,
+                maxIterations,
+                maxChain,
+                filesCount = report.Files.Count,
+                rawBytes = report.RawBytes,
+                huffmanBytes = report.HuffmanBytes,
+                arithmeticBytes = report.ArithmeticBytes,
+                totalSavedBytes = report.TotalSavedBytes,
+                totalSavedPercent = report.TotalSavedPercent,
+                huffmanPayloadBytes = report.HuffmanPayloadBytes,
+                arithmeticPayloadBytes = report.ArithmeticPayloadBytes,
+                payloadSavedBytes = report.PayloadSavedBytes,
+                huffmanSeconds = report.Files.Sum(f => f.HuffmanSeconds),
+                arithmeticSeconds = report.Files.Sum(f => f.ArithmeticSeconds),
+                groups = report.Files.GroupBy(f => f.Group).OrderBy(g => g.Key).Select(g => new
+                {
+                    group = g.Key,
+                    huffmanBytes = g.Sum(f => f.HuffmanBytes),
+                    arithmeticBytes = g.Sum(f => f.ArithmeticBytes),
+                    payloadSavedBytes = g.Sum(f => f.PayloadSavedBytes)
+                }).ToArray(),
+                files = report.Files.Select(f => new
+                {
+                    group = f.Group,
+                    file = f.File,
+                    rawBytes = f.RawBytes,
+                    blocks = f.Blocks,
+                    huffmanBytes = f.HuffmanBytes,
+                    arithmeticBytes = f.ArithmeticBytes,
+                    huffmanPayloadBytes = f.HuffmanPayloadBytes,
+                    arithmeticPayloadBytes = f.ArithmeticPayloadBytes,
+                    totalSavedBytes = f.TotalSavedBytes,
+                    payloadSavedBytes = f.PayloadSavedBytes,
+                    huffmanSeconds = f.HuffmanSeconds,
+                    arithmeticSeconds = f.ArithmeticSeconds
+                }).ToArray()
+            })
+        };
+
+        IMeasurementStore store = OpenMeasurementStore();
+        if (store.IsEnabled)
+        {
+            store.SaveExperiment(experiment);
+            Write($"[OK] Експеримент №{experiment.Id} збережено в БД.", ConsoleColor.Green);
+        }
+        else
+            Write("[УВАГА] БД вимкнена. Результати показано в консолі.", ConsoleColor.Yellow);
+    }
 
     private static string ByteLabel(byte b) => b switch
     {

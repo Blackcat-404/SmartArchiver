@@ -92,6 +92,14 @@ internal ref struct BitReader
         return (_current >> _left) & 1;
     }
 
+    /// <summary>
+    /// Зчитує наступний біт; після фізичного кінця повертає віртуальний нуль.
+    /// Лише для експериментального арифметичного декодера.
+    /// Звичайний ReadBit() і надалі повідомляє про обрізаний архівний payload.
+    /// </summary>
+    public int ReadBitOrZero() =>
+        _left == 0 && _next >= _data.Length ? 0 : ReadBit();
+
     public uint ReadBits(int count)
     {
         uint value = 0;
