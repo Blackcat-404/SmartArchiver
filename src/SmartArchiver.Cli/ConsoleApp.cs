@@ -9,6 +9,7 @@ using SmartArchiver.Data;
 using SmartArchiver.Data.Entities;
 using ArchiveVariant = SmartArchiver.Archive.StrategyVariant;
 using DataVariant = SmartArchiver.Data.Entities.StrategyVariant;
+using SmartArchiver.Compression.Benchmarks;
 
 namespace SmartArchiver.Cli;
 
@@ -308,6 +309,7 @@ internal static class ConsoleApp
             Console.WriteLine("  6) Виміряти Q на всьому корпусі");
             Console.WriteLine("  7) Ітеративний DP + Huffman (D1 №19)");
             Console.WriteLine("  8) Порівняння арифметичного кодування з Гаффманом");
+            Console.WriteLine("  9) Бонус CP3 №4: SmartArchiver проти zip -9");
             Console.WriteLine("  0) Повернутися до головного меню");
 
             string? choice = Prompt("Ваш вибір");
@@ -336,6 +338,9 @@ internal static class ConsoleApp
                     break;
                 case "8":
                     Guard(ArithmeticExperimentInteractive);
+                    break;
+                case "9":
+                    Guard(Zip9BonusInteractive);
                     break;
                 case "0":
                 case null:
@@ -1453,6 +1458,149 @@ internal static class ConsoleApp
                 "Результати показано в консолі.",
                 ConsoleColor.Yellow);
         }
+    }
+    private static void Zip9BonusInteractive()
+{
+    string? dataset = Prompt("Каталог корпусу 0..6", "Datasets");
+    if (dataset is null)
+        return;
+
+    RunZip9Bonus(dataset);
+}
+
+private static void RunZip9Bonus(string dataset)
+{
+    DateTime startedAtUtc = DateTime.UtcNow;
+
+    Write("=== Бонус CP3 №4: SmartArchiver проти ZIP (.NET SmallestSize) ===",
+        ConsoleColor.Cyan);
+    Write("ZIP створюється засобами .NET; це НЕ точне вимірювання Info-ZIP zip -9.",
+        ConsoleColor.DarkCyan);
+
+    Zip9Benchmark.Report report = Zip9Benchmark.RunDirectory(
+        dataset,
+        BuildAndVerifyZip9Sarc,
+        progress: message => Console.WriteLine(message));
+
+    Console.WriteLine();
+    Console.WriteLine($"Файлів: {report.FilesCount}");
+    Console.WriteLine($"Вхідних байтів: {report.RawBytes}");
+    Console.WriteLine($"ZIP (.NET SmallestSize): {report.ZipBytes} Б");
+
+    Console.WriteLine();
+    Write("=== Варіанти реального SARC ===", ConsoleColor.Cyan);
+    foreach (var c in report.Configurations)
+    {
+        Console.WriteLine($"{c.Name}: {c.SarcBytes} Б, " +
+            $"виграш відносно ZIP: {c.DeltaVsZipBytes:+#;-#;0} Б, " +
+            $"час {c.Seconds:F3} с, stored-блоків: {c.StoredBlocks}");
+    }
+
+    Console.WriteLine();
+    string verdict = report.GainBytes > 0
+        ? "[OK] SmartArchiver обігнав .NET ZIP SmallestSize на цьому корпусі!"
+        : report.GainBytes == 0
+            ? "[=] Однаковий розмір із .NET ZIP."
+            : "[INFO] .NET ZIP поки що менший за SARC.";
+    Write(verdict, report.GainBytes > 0 ? ConsoleColor.Green : ConsoleColor.Yellow);
+    Console.WriteLine($"Найкращий режим: {report.Best.Name}");
+    Console.WriteLine($"SARC: {report.Best.SarcBytes} Б; " +
+        $"ZIP .NET: {report.ZipBytes} Б; " +
+        $"виграш SARC: {report.GainBytes:+#;-#;0} Б " +
+        $"({report.GainPercent:+0.00;-0.00;0.00}% від ZIP)");
+
+    Console.WriteLine();
+    Write("=== За групами (окремий архів для кожної групи) ===", ConsoleColor.Cyan);
+    foreach (var group in report.Groups)
+    {
+        Console.WriteLine($"Група {group.Group}: вхід {group.RawBytes} Б; " +
+            $"ZIP .NET = {group.ZipBytes} Б; SARC = {group.SarcBytes} Б; " +
+            $"виграш SARC = {group.GainBytes:+#;-#;0} Б");
+    }
+
+    Console.WriteLine("Усі ZIP та SARC архіви перевірено побайтовим round-trip.");
+    Console.WriteLine("Порівнювали повні архіви з усіма заголовками, без шифрування.");
+    Console.WriteLine("Розміри окремих груп не слід підсумовувати: заголовки повторюються.");
+
+    var experiment = new Experiment
+    {
+        Kind = ExperimentKind.Parsing,
+        StartedAtUtc = startedAtUtc,
+        Dataset = "corpus",
+        ParametersJson = JsonSerializer.Serialize(new
+        {
+            experimentType = "ManagedZipVsSarc",
+            datasetPath = Path.GetFullPath(dataset),
+            zipImplementation = "System.IO.Compression.ZipArchive, CompressionLevel.SmallestSize",
+            fileCount = report.FilesCount,
+            rawBytes = report.RawBytes,
+            zipBytes = report.ZipBytes,
+            bestConfiguration = report.Best.Name,
+            bestSarcBytes = report.Best.SarcBytes,
+            gainBytes = report.GainBytes,
+            gainPercent = report.GainPercent,
+            successful = report.GainBytes > 0,
+            configurations = report.Configurations,
+            groups = report.Groups
+        })
+    };
+
+    IMeasurementStore store = OpenMeasurementStore();
+    if (store.IsEnabled)
+    {
+        store.SaveExperiment(experiment);
+        Write($"[OK] Результати записано в БД: експеримент №{experiment.Id}.",
+            ConsoleColor.Green);
+    }
+    else
+    {
+        Write("[УВАГА] БД вимкнена: результати показано в консолі.",
+            ConsoleColor.Yellow);
+    }
+}
+
+
+    private static Zip9Benchmark.SarcResult BuildAndVerifyZip9Sarc(
+    IReadOnlyList<Zip9Benchmark.SourceFile> sources,
+    Zip9Benchmark.Configuration config)
+    {
+        List<ArchiveInput> inputs = sources.Select(source =>
+        {
+            SafeNames.EnsureSafe(source.Name);
+            return new ArchiveInput(source.Name, source.Bytes);
+        }).ToList();
+
+        BlockSplitMode splitMode = config.SplitMode == Zip9Benchmark.SplitMode.Dp
+            ? BlockSplitMode.Dp
+            : BlockSplitMode.Fixed;
+
+        var writer = new ArchiveWriter(
+            blockSize: config.BlockSize,
+            analyzer: new FileAnalyzer(),
+            parseMode: config.ParseMode,
+            splitMode: splitMode);
+
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        IReadOnlyList<PreparedFile> prepared = writer.Prepare(inputs);
+        byte[] archive = ArchiveWriter.BuildFromPrepared(prepared);
+        watch.Stop();
+
+        IReadOnlyList<ExtractedFile> restored = ArchiveReader.Read(archive);
+        if (restored.Count != inputs.Count)
+            throw new InvalidDataException("SARC round-trip: різна кількість файлів.");
+
+        var byName = restored.ToDictionary(
+            file => file.Name, file => file.Data, StringComparer.Ordinal);
+        foreach (ArchiveInput input in inputs)
+        {
+            if (!byName.TryGetValue(input.Name, out byte[]? decoded)
+                || !decoded.AsSpan().SequenceEqual(input.Data))
+                throw new InvalidDataException($"SARC round-trip не збігся: {input.Name}");
+        }
+
+        int storedBlocks = prepared.Sum(file => file.Blocks.Count(block => block.IsStored));
+        return new Zip9Benchmark.SarcResult(
+            archive.LongLength, watch.Elapsed.TotalSeconds, storedBlocks);
     }
 
     private static void ArithmeticExperimentInteractive()
