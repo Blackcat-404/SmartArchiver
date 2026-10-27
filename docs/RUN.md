@@ -32,6 +32,7 @@ dotnet run --project src/SmartArchiver.Cli -- analyze README.md
 dotnet run --project src/SmartArchiver.Cli -- train-classifier Datasets classifier.json
 dotnet run --project src/SmartArchiver.Cli -- train-predictor Datasets predictor.json
 dotnet run --project src/SmartArchiver.Cli -- prediction-experiment Datasets
+dotnet run --project src/SmartArchiver.Cli -- prediction-q Datasets [team_config.json]
 dotnet run --project src/SmartArchiver.Cli -- strategy-experiment Datasets
 dotnet run --project src/SmartArchiver.Cli -- pack-experiment Datasets 65536 [team_config.json]
 dotnet run --project src/SmartArchiver.Cli -- measure Datasets [team_config.json]

@@ -76,7 +76,10 @@ dotnet run --project src/SmartArchiver.Cli -- train-classifier Datasets src/Smar
 ```bash
 dotnet run --project src/SmartArchiver.Cli -- train-predictor Datasets src/SmartArchiver.Analysis/Model/predictor.json
 dotnet run --project src/SmartArchiver.Cli -- prediction-experiment Datasets
+dotnet run --project src/SmartArchiver.Cli -- prediction-q Datasets [team_config.json]
 ```
+
+`prediction-q` проганяє кожну групу через повний тракт двічі, з файлами як є і із залишками прогнозу, і рахує Q обох варіантів. Час прогнозу й відновлення байтів входить у T. Результати пишуться в `PredictionQResults`, пояснення в рішенні 49.
 
 ### Фіксована стратегія проти класифікатора
 
@@ -143,7 +146,7 @@ dotnet run --project src/SmartArchiver.Cli -- db
 | --- | --- | --- |
 | `MeasurementRuns` | один прогін вимірювання Q | дата (UTC), коміт, seed, набір даних, α, β, t_ref, інші параметри (JSON), B_orig, B_arc, час t, чи всі файли відновлено, Q |
 | `MeasurementFileResults` | один файл прогону | прогін (зовнішній ключ, каскадне видалення), група корпусу 0–6, розмір до і в архіві, чи відновлено |
-| `Experiments` | один запуск експерименту | вид (`Parsing`, `Packing`, `Training`, `Prediction`, `Strategy`, `Genetic`, `BlockImpact`, `EncryptionOrder`), дата (UTC), коміт, seed, набір даних, параметри (JSON) |
+| `Experiments` | один запуск експерименту | вид (`Parsing`, `Packing`, `Training`, `Prediction`, `Strategy`, `Genetic`, `BlockImpact`, `EncryptionOrder`, `PredictionQ`), дата (UTC), коміт, seed, набір даних, параметри (JSON) |
 | `ParsingResults` | розбір потоку: одна група × один метод | група 0–6, метод (`Greedy`, `Lazy`, `Dp`), байтів до і після, час |
 | `PackingResults` | пакування томів: один том × один метод | метод (`Dp`, `Greedy`), номер тому, місткість W, використано байтів, сумарна цінність, кількість блоків, час |
 | `StrategyResults` | стратегія стиснення: одна група × один варіант | група 0–6, варіант (`Stored`, `Fixed`, `Classifier`), файлів і скільки стиснуто, розмір до і в архіві, час запакування й розпакування, чи все відновлено |
@@ -152,6 +155,7 @@ dotnet run --project src/SmartArchiver.Cli -- db
 | `ArchiveOperations` | історія архівацій: один `pack` або `unpack` | дата (UTC), операція (`Pack`, `Unpack`), файлів і скільки стиснуто, розмір файлів і архіву, томів, час, успіх або код помилки (`E_HMAC`, `E_CAPACITY`, `E_IO`…) |
 | `BlockImpactResults` | вплив блоку тракту: один вимкнений блок | вимкнений блок (`None` = повний тракт, `Analysis`, `Lz77`, `Huffman`, `Packing`, `Encryption`, `Prediction`), розмір файлів і томів, час, чи все відновлено, S, T, Q |
 | `EncryptionOrderResults` | порядок «стиснути → зашифрувати» проти зворотного: один файл | група 0–6, розмір файлу, розмір у кожному з двох порядків |
+| `PredictionQResults` | Q з прогнозом і без: одна група × один варіант | група 0–6, з прогнозом чи без, файлів, розмір файлів і томів, час, чи все відновлено, S, T, Q |
 | `GeneticIndividuals` | журнал еволюції ГА: одна хромосома | алгоритм (`Genetic`, `Random`, `LocalSearch`), покоління, номер особини, гени (JSON-об'єкт), пристосованість Q, окремо S і T |
 
 Результати експериментів залежать від `Experiments` через зовнішній ключ із каскадним видаленням. Неможливі значення відхиляє сама база (обмеження CHECK): група понад 6, від'ємні розміри й час, використано більше за місткість тому, macro-F1 поза межами 0…1, нуль епох, гени не JSON-об'єкт, та сама особина двічі тощо.

@@ -1261,3 +1261,49 @@ Assert.Throws<DatabaseException>(() => store.SaveExperiment(experiment));
 Assert.Empty(store.ListExperiments(experiment.Kind));
 ```
 
+## 14. Вплив прогнозу байта на Q по групах
+
+**Промпт:**
+
+> На просунутому рівні треба показати Q з прогнозом наступного байта і без, окремо по групах корпусу, з поясненням. Формат архіву не визначає, як записувати залишки прогнозу, а архів не повинен залежати від проєкту аналізу. До того ж прогноз повільний: близько 25 мкс на байт. Як чесно виміряти Q і прискорити прогноз, не змінивши результату? Дай приклад коду.
+
+**Відповідь:**
+
+**Вимір без зміни формату.** Пропустити залишки через наявний повний тракт: перед запакуванням замінити файл залишками, після розпакування відновити байти й звірити з оригіналом. Час прогнозу й відновлення входить у T, тож Q враховує обидві ціни. Щоб архів не залежав від перцептрона, потрібен маленький контракт у Core, як `IFileAnalyzer`:
+
+```csharp
+public interface IResidualCoder
+{
+    byte[] Encode(ReadOnlySpan<byte> data);
+    byte[] Decode(ReadOnlySpan<byte> encoded);
+}
+```
+
+```csharp
+var watch = Stopwatch.StartNew();
+ArchiveInput[] inputs = coder is null ? files : [.. files.Select(f => f with { Data = coder.Encode(f.Data) })];
+IReadOnlyList<byte[]> volumes = ArchivePipeline.Pack(inputs, options);
+ArchiveResult<IReadOnlyList<ExtractedFile>> unpacked = ArchivePipeline.TryUnpack(volumes, options.Password);
+```
+
+**Прискорення.** Прогноз з контекстом k = 2 залежить лише від двох останніх байтів, тобто від 65 536 можливих пар. Відповідь для кожної пари можна запам'ятати й не запускати мережу вдруге. Функція та сама, тож відновлення не зміниться. Важливо, щоб таблиця була своя в кожного виклику: тоді кожне кодування платить за свої прогнози, час лишається чесним, а спільного стану між потоками немає. Тест має порівняти залишки з прогнозом кожного байта окремо, зокрема на шумі, де трапляються майже всі пари.
+
+```csharp
+public byte Predict(ReadOnlySpan<byte> history)
+{
+    int k = predictor.ContextBytes;
+    if (guesses is null || history.Length < k)
+        return predictor.Predict(history);
+
+    int context = 0;
+    for (int back = 0; back < k; back++)
+        context = context << 8 | history[history.Length - 1 - back];
+    short guess = guesses[context];
+    if (guess < 0)
+        guesses[context] = guess = predictor.Predict(history);
+    return (byte)guess;
+}
+```
+
+**Чого чекати.** Якщо LZ77 + Гаффман уже використовують повтори й частоти, прогноз «найімовірнішого байта» може не дати виграшу в розмірі, а на даних з багатьма різними контекстами коштуватиме помітного часу. Такий результат треба показати по групах і пояснити.
+
