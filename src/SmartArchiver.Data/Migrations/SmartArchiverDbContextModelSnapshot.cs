@@ -623,7 +623,7 @@ namespace SmartArchiver.Data.Migrations
 
                             t.HasCheckConstraint("CK_StrategyResults_Time", "[PackSeconds] >= 0 AND [UnpackSeconds] >= 0");
 
-                            t.HasCheckConstraint("CK_StrategyResults_Variant", "[Variant] IN ('Stored', 'Fixed', 'Classifier')");
+                            t.HasCheckConstraint("CK_StrategyResults_Variant", "[Variant] IN ('Stored', 'Fixed', 'Classifier', 'ClassifierPerBlock')");
                         });
                 });
 

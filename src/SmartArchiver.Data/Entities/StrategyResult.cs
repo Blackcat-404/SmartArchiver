@@ -11,6 +11,9 @@ public enum StrategyVariant
 
     /// <summary>The file analyzer (classifier) decides per file.</summary>
     Classifier,
+
+    /// <summary>The file analyzer decides for every block of a file separately.</summary>
+    ClassifierPerBlock,
 }
 
 /// <summary>One corpus group packed into an archive with one strategy variant.</summary>

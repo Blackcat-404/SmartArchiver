@@ -364,6 +364,7 @@ public class ExperimentStoreTests
             new() { Group = 0, Variant = StrategyVariant.Stored, FileCount = 3, CompressedFiles = 0, OriginalBytes = 150_000, ArchiveBytes = 150_400, PackSeconds = 0.01, UnpackSeconds = 0.01, AllRestored = true },
             new() { Group = 0, Variant = StrategyVariant.Fixed, FileCount = 3, CompressedFiles = 3, OriginalBytes = 150_000, ArchiveBytes = 48_000, PackSeconds = 0.4, UnpackSeconds = 0.05, AllRestored = true },
             new() { Group = 5, Variant = StrategyVariant.Classifier, FileCount = 3, CompressedFiles = 0, OriginalBytes = 76_000, ArchiveBytes = 76_300, PackSeconds = 0.02, UnpackSeconds = 0.01, AllRestored = true },
+            new() { Group = 5, Variant = StrategyVariant.ClassifierPerBlock, FileCount = 3, CompressedFiles = 1, OriginalBytes = 76_000, ArchiveBytes = 70_100, PackSeconds = 0.03, UnpackSeconds = 0.01, AllRestored = true },
         ];
         return e;
     }
