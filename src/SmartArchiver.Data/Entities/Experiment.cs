@@ -26,6 +26,9 @@ public enum ExperimentKind
 
     /// <summary>Compression before encryption against compression after it.</summary>
     EncryptionOrder,
+
+    /// <summary>Q of each corpus group with next-byte prediction and without it.</summary>
+    PredictionQ,
 }
 
 /// <summary>
@@ -64,4 +67,6 @@ public sealed class Experiment
     public List<BlockImpactResult> BlockImpactResults { get; set; } = [];
 
     public List<EncryptionOrderResult> EncryptionOrderResults { get; set; } = [];
+
+    public List<PredictionQResult> PredictionQResults { get; set; } = [];
 }

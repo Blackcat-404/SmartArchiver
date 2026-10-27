@@ -129,6 +129,22 @@ public class ExperimentStoreTests
     }
 
     [DatabaseFact]
+    public void SaveExperiment_PredictionQ_IsReadBackUnchanged()
+    {
+        using var database = new TestDatabase();
+        var store = MeasurementStore.Open(database.ConnectionString);
+        Experiment experiment = PredictionQExperiment();
+
+        store.SaveExperiment(experiment);
+
+        Assert.Equal(
+            experiment.PredictionQResults.Select(r => (r.Group, r.Predicted, r.FileCount, r.OriginalBytes, r.ArchiveBytes,
+                r.ElapsedSeconds, r.AllRestored, r.S, r.T, r.Q)),
+            store.GetExperiment(experiment.Id)!.PredictionQResults.OrderBy(r => r.Id).Select(r => (r.Group, r.Predicted,
+                r.FileCount, r.OriginalBytes, r.ArchiveBytes, r.ElapsedSeconds, r.AllRestored, r.S, r.T, r.Q)));
+    }
+
+    [DatabaseFact]
     public void ListExperiments_ReturnsOnlyThatKind_OldestFirst()
     {
         using var database = new TestDatabase();
@@ -208,6 +224,10 @@ public class ExperimentStoreTests
     [InlineData("block impact unknown block")]
     [InlineData("encryption order group above 6")]
     [InlineData("encryption order negative size")]
+    [InlineData("prediction Q group above 6")]
+    [InlineData("prediction Q above zero without restore")]
+    [InlineData("prediction Q S above 1")]
+    [InlineData("prediction Q same group and variant twice")]
     public void SaveExperiment_ValueOutsideConstraint_IsRejected(string violation)
     {
         using var database = new TestDatabase();
@@ -240,6 +260,10 @@ public class ExperimentStoreTests
             "block impact unknown block" => With(BlockImpactExperiment(), e => e.BlockImpactResults[0].DisabledBlock = (PipelineBlock)42),
             "encryption order group above 6" => With(EncryptionOrderExperiment(), e => e.EncryptionOrderResults[0].Group = 7),
             "encryption order negative size" => With(EncryptionOrderExperiment(), e => e.EncryptionOrderResults[0].EncryptThenCompressBytes = -1),
+            "prediction Q group above 6" => With(PredictionQExperiment(), e => e.PredictionQResults[0].Group = 7),
+            "prediction Q above zero without restore" => With(PredictionQExperiment(), e => e.PredictionQResults[1].AllRestored = false),
+            "prediction Q S above 1" => With(PredictionQExperiment(), e => e.PredictionQResults[0].S = 1.1),
+            "prediction Q same group and variant twice" => With(PredictionQExperiment(), e => e.PredictionQResults[1].Predicted = false),
             _ => throw new ArgumentOutOfRangeException(nameof(violation)),
         };
 
@@ -250,7 +274,7 @@ public class ExperimentStoreTests
         using var db = database.CreateContext();
         Assert.Equal(0, db.ParsingResults.Count() + db.PackingResults.Count() + db.TrainingRuns.Count()
             + db.PredictionResults.Count() + db.StrategyResults.Count() + db.GeneticIndividuals.Count()
-            + db.BlockImpactResults.Count() + db.EncryptionOrderResults.Count());
+            + db.BlockImpactResults.Count() + db.EncryptionOrderResults.Count() + db.PredictionQResults.Count());
     }
 
     [DatabaseTheory]
@@ -375,6 +399,17 @@ public class ExperimentStoreTests
         [
             new() { Group = 0, OriginalBytes = 156_000, CompressThenEncryptBytes = 4_200, EncryptThenCompressBytes = 156_400 },
             new() { Group = 5, OriginalBytes = 76_000, CompressThenEncryptBytes = 76_300, EncryptThenCompressBytes = 76_300 },
+        ];
+        return e;
+    }
+
+    private static Experiment PredictionQExperiment()
+    {
+        Experiment e = NewExperiment(ExperimentKind.PredictionQ);
+        e.PredictionQResults =
+        [
+            new() { Group = 0, Predicted = false, FileCount = 3, OriginalBytes = 156_000, ArchiveBytes = 4_400, ElapsedSeconds = 0.3, AllRestored = true, S = 0.97, T = 0.77, Q = 0.87 },
+            new() { Group = 0, Predicted = true, FileCount = 3, OriginalBytes = 156_000, ArchiveBytes = 5_600, ElapsedSeconds = 0.35, AllRestored = true, S = 0.97, T = 0.74, Q = 0.85 },
         ];
         return e;
     }

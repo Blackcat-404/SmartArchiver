@@ -37,6 +37,8 @@ public sealed class SmartArchiverDbContext(DbContextOptions<SmartArchiverDbConte
 
     public DbSet<EncryptionOrderResult> EncryptionOrderResults => Set<EncryptionOrderResult>();
 
+    public DbSet<PredictionQResult> PredictionQResults => Set<PredictionQResult>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<MeasurementRun>(run =>
@@ -83,6 +85,8 @@ public sealed class SmartArchiverDbContext(DbContextOptions<SmartArchiverDbConte
             experiment.HasMany(e => e.BlockImpactResults).WithOne(r => r.Experiment)
                 .HasForeignKey(r => r.ExperimentId).OnDelete(DeleteBehavior.Cascade);
             experiment.HasMany(e => e.EncryptionOrderResults).WithOne(r => r.Experiment)
+                .HasForeignKey(r => r.ExperimentId).OnDelete(DeleteBehavior.Cascade);
+            experiment.HasMany(e => e.PredictionQResults).WithOne(r => r.Experiment)
                 .HasForeignKey(r => r.ExperimentId).OnDelete(DeleteBehavior.Cascade);
             experiment.ToTable(t =>
             {
@@ -133,6 +137,7 @@ public sealed class SmartArchiverDbContext(DbContextOptions<SmartArchiverDbConte
         modelBuilder.Entity<ArchiveOperation>(ConfigureHistory);
         modelBuilder.Entity<BlockImpactResult>(ConfigureBlockImpact);
         modelBuilder.Entity<EncryptionOrderResult>(ConfigureEncryptionOrder);
+        modelBuilder.Entity<PredictionQResult>(ConfigurePredictionQ);
     }
 
     private static void ConfigurePrediction(EntityTypeBuilder<PredictionResult> result) => result.ToTable(t =>
@@ -207,6 +212,19 @@ public sealed class SmartArchiverDbContext(DbContextOptions<SmartArchiverDbConte
         t.HasCheckConstraint("CK_EncryptionOrderResults_Sizes",
             "[OriginalBytes] >= 0 AND [CompressThenEncryptBytes] >= 0 AND [EncryptThenCompressBytes] >= 0");
     });
+
+    private static void ConfigurePredictionQ(EntityTypeBuilder<PredictionQResult> result)
+    {
+        result.HasIndex(r => new { r.ExperimentId, r.Group, r.Predicted }).IsUnique();
+        result.ToTable(t =>
+        {
+            t.HasCheckConstraint("CK_PredictionQResults_Group", $"[Group] <= {MaxFileType}");
+            t.HasCheckConstraint("CK_PredictionQResults_Sizes",
+                "[FileCount] >= 0 AND [OriginalBytes] >= 0 AND [ArchiveBytes] >= 0 AND [ElapsedSeconds] >= 0");
+            t.HasCheckConstraint("CK_PredictionQResults_Q", "[S] BETWEEN 0 AND 1 AND [T] BETWEEN 0 AND 1 AND [Q] >= 0");
+            t.HasCheckConstraint("CK_PredictionQResults_Restored", "[AllRestored] = 1 OR [Q] = 0");
+        });
+    }
 
     /// <summary>CHECK that an enum stored as text holds one of its names; built from the enum so they cannot drift apart.</summary>
     private static string OneOf<TEnum>(string column) where TEnum : struct, Enum =>

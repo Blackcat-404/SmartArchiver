@@ -212,7 +212,7 @@ namespace SmartArchiver.Data.Migrations
                         {
                             t.HasCheckConstraint("CK_Experiments_Dataset", "LEN([Dataset]) > 0");
 
-                            t.HasCheckConstraint("CK_Experiments_Kind", "[Kind] IN ('Parsing', 'Packing', 'Training', 'Prediction', 'Strategy', 'Genetic', 'BlockImpact', 'EncryptionOrder')");
+                            t.HasCheckConstraint("CK_Experiments_Kind", "[Kind] IN ('Parsing', 'Packing', 'Training', 'Prediction', 'Strategy', 'Genetic', 'BlockImpact', 'EncryptionOrder', 'PredictionQ')");
                         });
                 });
 
@@ -463,6 +463,64 @@ namespace SmartArchiver.Data.Migrations
                         });
                 });
 
+            modelBuilder.Entity("SmartArchiver.Data.Entities.PredictionQResult", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<bool>("AllRestored")
+                        .HasColumnType("bit");
+
+                    b.Property<long>("ArchiveBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<double>("ElapsedSeconds")
+                        .HasColumnType("float");
+
+                    b.Property<int>("ExperimentId")
+                        .HasColumnType("int");
+
+                    b.Property<int>("FileCount")
+                        .HasColumnType("int");
+
+                    b.Property<byte>("Group")
+                        .HasColumnType("tinyint");
+
+                    b.Property<long>("OriginalBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<bool>("Predicted")
+                        .HasColumnType("bit");
+
+                    b.Property<double>("Q")
+                        .HasColumnType("float");
+
+                    b.Property<double>("S")
+                        .HasColumnType("float");
+
+                    b.Property<double>("T")
+                        .HasColumnType("float");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExperimentId", "Group", "Predicted")
+                        .IsUnique();
+
+                    b.ToTable("PredictionQResults", t =>
+                        {
+                            t.HasCheckConstraint("CK_PredictionQResults_Group", "[Group] <= 6");
+
+                            t.HasCheckConstraint("CK_PredictionQResults_Q", "[S] BETWEEN 0 AND 1 AND [T] BETWEEN 0 AND 1 AND [Q] >= 0");
+
+                            t.HasCheckConstraint("CK_PredictionQResults_Restored", "[AllRestored] = 1 OR [Q] = 0");
+
+                            t.HasCheckConstraint("CK_PredictionQResults_Sizes", "[FileCount] >= 0 AND [OriginalBytes] >= 0 AND [ArchiveBytes] >= 0 AND [ElapsedSeconds] >= 0");
+                        });
+                });
+
             modelBuilder.Entity("SmartArchiver.Data.Entities.PredictionResult", b =>
                 {
                     b.Property<int>("Id")
@@ -690,6 +748,17 @@ namespace SmartArchiver.Data.Migrations
                     b.Navigation("Experiment");
                 });
 
+            modelBuilder.Entity("SmartArchiver.Data.Entities.PredictionQResult", b =>
+                {
+                    b.HasOne("SmartArchiver.Data.Entities.Experiment", "Experiment")
+                        .WithMany("PredictionQResults")
+                        .HasForeignKey("ExperimentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Experiment");
+                });
+
             modelBuilder.Entity("SmartArchiver.Data.Entities.PredictionResult", b =>
                 {
                     b.HasOne("SmartArchiver.Data.Entities.Experiment", "Experiment")
@@ -734,6 +803,8 @@ namespace SmartArchiver.Data.Migrations
                     b.Navigation("PackingResults");
 
                     b.Navigation("ParsingResults");
+
+                    b.Navigation("PredictionQResults");
 
                     b.Navigation("PredictionResults");
 

@@ -76,6 +76,7 @@ internal sealed class SqlMeasurementStore : IMeasurementStore
             .Include(e => e.GeneticIndividuals)
             .Include(e => e.BlockImpactResults)
             .Include(e => e.EncryptionOrderResults)
+            .Include(e => e.PredictionQResults)
             .AsSplitQuery()
             .SingleOrDefault(e => e.Id == id));
     }
