@@ -1,6 +1,6 @@
 namespace SmartArchiver.Data.Entities;
 
-/// <summary>Which CP2 experiment a row belongs to. Stored as text, so the table stays readable.</summary>
+/// <summary>Which experiment a row belongs to. Stored as text, so the table stays readable.</summary>
 public enum ExperimentKind
 {
     /// <summary>Greedy, lazy and DP parsing of the stream (LZ77).</summary>
@@ -17,6 +17,9 @@ public enum ExperimentKind
 
     /// <summary>Fixed compression strategy against the strategy chosen by the classifier.</summary>
     Strategy,
+
+    /// <summary>GA evolution journal, together with the random search it is compared with.</summary>
+    Genetic,
 }
 
 /// <summary>
@@ -49,4 +52,6 @@ public sealed class Experiment
     public List<PredictionResult> PredictionResults { get; set; } = [];
 
     public List<StrategyResult> StrategyResults { get; set; } = [];
+
+    public List<GeneticIndividual> GeneticIndividuals { get; set; } = [];
 }

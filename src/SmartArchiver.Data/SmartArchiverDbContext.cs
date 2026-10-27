@@ -29,6 +29,8 @@ public sealed class SmartArchiverDbContext(DbContextOptions<SmartArchiverDbConte
 
     public DbSet<StrategyResult> StrategyResults => Set<StrategyResult>();
 
+    public DbSet<GeneticIndividual> GeneticIndividuals => Set<GeneticIndividual>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<MeasurementRun>(run =>
@@ -69,6 +71,8 @@ public sealed class SmartArchiverDbContext(DbContextOptions<SmartArchiverDbConte
             experiment.HasMany(e => e.PredictionResults).WithOne(r => r.Experiment)
                 .HasForeignKey(r => r.ExperimentId).OnDelete(DeleteBehavior.Cascade);
             experiment.HasMany(e => e.StrategyResults).WithOne(r => r.Experiment)
+                .HasForeignKey(r => r.ExperimentId).OnDelete(DeleteBehavior.Cascade);
+            experiment.HasMany(e => e.GeneticIndividuals).WithOne(r => r.Experiment)
                 .HasForeignKey(r => r.ExperimentId).OnDelete(DeleteBehavior.Cascade);
             experiment.ToTable(t =>
             {
@@ -115,6 +119,7 @@ public sealed class SmartArchiverDbContext(DbContextOptions<SmartArchiverDbConte
 
         modelBuilder.Entity<PredictionResult>(ConfigurePrediction);
         modelBuilder.Entity<StrategyResult>(ConfigureStrategy);
+        modelBuilder.Entity<GeneticIndividual>(ConfigureGenetic);
     }
 
     private static void ConfigurePrediction(EntityTypeBuilder<PredictionResult> result) => result.ToTable(t =>
@@ -137,6 +142,19 @@ public sealed class SmartArchiverDbContext(DbContextOptions<SmartArchiverDbConte
             t.HasCheckConstraint("CK_StrategyResults_Files", "[FileCount] >= 0 AND [CompressedFiles] BETWEEN 0 AND [FileCount]");
             t.HasCheckConstraint("CK_StrategyResults_Sizes", "[OriginalBytes] >= 0 AND [ArchiveBytes] >= 0");
             t.HasCheckConstraint("CK_StrategyResults_Time", "[PackSeconds] >= 0 AND [UnpackSeconds] >= 0");
+        });
+    }
+
+    private static void ConfigureGenetic(EntityTypeBuilder<GeneticIndividual> individual)
+    {
+        individual.Property(r => r.Algorithm).HasConversion<string>().HasMaxLength(20);
+        individual.HasIndex(r => new { r.ExperimentId, r.Algorithm, r.Generation, r.Individual }).IsUnique();
+        individual.ToTable(t =>
+        {
+            t.HasCheckConstraint("CK_GeneticIndividuals_Algorithm", OneOf<SearchAlgorithm>("Algorithm"));
+            t.HasCheckConstraint("CK_GeneticIndividuals_Position", "[Generation] >= 0 AND [Individual] >= 0");
+            t.HasCheckConstraint("CK_GeneticIndividuals_Fitness", "[Fitness] >= 0 AND [S] BETWEEN 0 AND 1 AND [T] BETWEEN 0 AND 1");
+            t.HasCheckConstraint("CK_GeneticIndividuals_Genes", "ISJSON([GenesJson]) = 1 AND LEFT([GenesJson], 1) = '{'");
         });
     }
 

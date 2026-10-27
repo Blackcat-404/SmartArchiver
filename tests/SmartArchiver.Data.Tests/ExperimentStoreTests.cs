@@ -93,6 +93,21 @@ public class ExperimentStoreTests
     }
 
     [DatabaseFact]
+    public void SaveExperiment_GeneticJournal_IsReadBackUnchanged()
+    {
+        using var database = new TestDatabase();
+        var store = MeasurementStore.Open(database.ConnectionString);
+        Experiment genetic = GeneticExperiment();
+
+        store.SaveExperiment(genetic);
+
+        Assert.Equal(
+            genetic.GeneticIndividuals.Select(r => (r.Algorithm, r.Generation, r.Individual, r.GenesJson, r.Fitness, r.S, r.T)),
+            store.GetExperiment(genetic.Id)!.GeneticIndividuals.OrderBy(r => r.Id)
+                .Select(r => (r.Algorithm, r.Generation, r.Individual, r.GenesJson, r.Fitness, r.S, r.T)));
+    }
+
+    [DatabaseFact]
     public void ListExperiments_ReturnsOnlyThatKind_OldestFirst()
     {
         using var database = new TestDatabase();
@@ -160,6 +175,12 @@ public class ExperimentStoreTests
     [InlineData("strategy group above 6")]
     [InlineData("strategy more compressed files than files")]
     [InlineData("strategy negative time")]
+    [InlineData("genetic negative generation")]
+    [InlineData("genetic negative individual")]
+    [InlineData("genetic S above 1")]
+    [InlineData("genetic negative fitness")]
+    [InlineData("genetic genes not json")]
+    [InlineData("genetic same individual twice")]
     public void SaveExperiment_ValueOutsideConstraint_IsRejected(string violation)
     {
         using var database = new TestDatabase();
@@ -180,6 +201,12 @@ public class ExperimentStoreTests
             "strategy group above 6" => With(StrategyExperiment(), e => e.StrategyResults[0].Group = 7),
             "strategy more compressed files than files" => With(StrategyExperiment(), e => e.StrategyResults[0].CompressedFiles = 4),
             "strategy negative time" => With(StrategyExperiment(), e => e.StrategyResults[0].UnpackSeconds = -0.1),
+            "genetic negative generation" => With(GeneticExperiment(), e => e.GeneticIndividuals[0].Generation = -1),
+            "genetic negative individual" => With(GeneticExperiment(), e => e.GeneticIndividuals[0].Individual = -1),
+            "genetic S above 1" => With(GeneticExperiment(), e => e.GeneticIndividuals[0].S = 1.2),
+            "genetic negative fitness" => With(GeneticExperiment(), e => e.GeneticIndividuals[0].Fitness = -0.1),
+            "genetic genes not json" => With(GeneticExperiment(), e => e.GeneticIndividuals[0].GenesJson = "window=4096"),
+            "genetic same individual twice" => With(GeneticExperiment(), e => e.GeneticIndividuals[1].Individual = 0),
             _ => throw new ArgumentOutOfRangeException(nameof(violation)),
         };
 
@@ -268,6 +295,18 @@ public class ExperimentStoreTests
             new() { Group = 0, Variant = StrategyVariant.Stored, FileCount = 3, CompressedFiles = 0, OriginalBytes = 150_000, ArchiveBytes = 150_400, PackSeconds = 0.01, UnpackSeconds = 0.01, AllRestored = true },
             new() { Group = 0, Variant = StrategyVariant.Fixed, FileCount = 3, CompressedFiles = 3, OriginalBytes = 150_000, ArchiveBytes = 48_000, PackSeconds = 0.4, UnpackSeconds = 0.05, AllRestored = true },
             new() { Group = 5, Variant = StrategyVariant.Classifier, FileCount = 3, CompressedFiles = 0, OriginalBytes = 76_000, ArchiveBytes = 76_300, PackSeconds = 0.02, UnpackSeconds = 0.01, AllRestored = true },
+        ];
+        return e;
+    }
+
+    private static Experiment GeneticExperiment()
+    {
+        Experiment e = NewExperiment(ExperimentKind.Genetic);
+        e.GeneticIndividuals =
+        [
+            new() { Algorithm = SearchAlgorithm.Genetic, Generation = 0, Individual = 0, GenesJson = """{"window":4096,"min_match":3,"no_compress_threshold":7.5}""", Fitness = 0.61, S = 0.72, T = 0.5 },
+            new() { Algorithm = SearchAlgorithm.Genetic, Generation = 0, Individual = 1, GenesJson = """{"window":1024,"min_match":4,"no_compress_threshold":7.9}""", Fitness = 0.58, S = 0.66, T = 0.5 },
+            new() { Algorithm = SearchAlgorithm.Random, Generation = 0, Individual = 0, GenesJson = """{"window":256,"min_match":5,"no_compress_threshold":6}""", Fitness = 0.4, S = 0.3, T = 0.5 },
         ];
         return e;
     }

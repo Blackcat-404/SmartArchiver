@@ -63,7 +63,59 @@ namespace SmartArchiver.Data.Migrations
                         {
                             t.HasCheckConstraint("CK_Experiments_Dataset", "LEN([Dataset]) > 0");
 
-                            t.HasCheckConstraint("CK_Experiments_Kind", "[Kind] IN ('Parsing', 'Packing', 'Training', 'Prediction', 'Strategy')");
+                            t.HasCheckConstraint("CK_Experiments_Kind", "[Kind] IN ('Parsing', 'Packing', 'Training', 'Prediction', 'Strategy', 'Genetic')");
+                        });
+                });
+
+            modelBuilder.Entity("SmartArchiver.Data.Entities.GeneticIndividual", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("Algorithm")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.Property<int>("ExperimentId")
+                        .HasColumnType("int");
+
+                    b.Property<double>("Fitness")
+                        .HasColumnType("float");
+
+                    b.Property<int>("Generation")
+                        .HasColumnType("int");
+
+                    b.Property<string>("GenesJson")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<int>("Individual")
+                        .HasColumnType("int");
+
+                    b.Property<double>("S")
+                        .HasColumnType("float");
+
+                    b.Property<double>("T")
+                        .HasColumnType("float");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExperimentId", "Algorithm", "Generation", "Individual")
+                        .IsUnique();
+
+                    b.ToTable("GeneticIndividuals", t =>
+                        {
+                            t.HasCheckConstraint("CK_GeneticIndividuals_Algorithm", "[Algorithm] IN ('Genetic', 'Random', 'LocalSearch')");
+
+                            t.HasCheckConstraint("CK_GeneticIndividuals_Fitness", "[Fitness] >= 0 AND [S] BETWEEN 0 AND 1 AND [T] BETWEEN 0 AND 1");
+
+                            t.HasCheckConstraint("CK_GeneticIndividuals_Genes", "ISJSON([GenesJson]) = 1 AND LEFT([GenesJson], 1) = '{'");
+
+                            t.HasCheckConstraint("CK_GeneticIndividuals_Position", "[Generation] >= 0 AND [Individual] >= 0");
                         });
                 });
 
@@ -423,6 +475,17 @@ namespace SmartArchiver.Data.Migrations
                         });
                 });
 
+            modelBuilder.Entity("SmartArchiver.Data.Entities.GeneticIndividual", b =>
+                {
+                    b.HasOne("SmartArchiver.Data.Entities.Experiment", "Experiment")
+                        .WithMany("GeneticIndividuals")
+                        .HasForeignKey("ExperimentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Experiment");
+                });
+
             modelBuilder.Entity("SmartArchiver.Data.Entities.MeasurementFileResult", b =>
                 {
                     b.HasOne("SmartArchiver.Data.Entities.MeasurementRun", "Run")
@@ -491,6 +554,8 @@ namespace SmartArchiver.Data.Migrations
 
             modelBuilder.Entity("SmartArchiver.Data.Entities.Experiment", b =>
                 {
+                    b.Navigation("GeneticIndividuals");
+
                     b.Navigation("PackingResults");
 
                     b.Navigation("ParsingResults");
