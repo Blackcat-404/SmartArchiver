@@ -29,4 +29,10 @@ public interface IMeasurementStore
 
     /// <summary>Experiments of one kind without their results, oldest first.</summary>
     IReadOnlyList<Experiment> ListExperiments(ExperimentKind kind);
+
+    /// <summary>Adds one pack or unpack to the archive history.</summary>
+    void SaveArchiveOperation(ArchiveOperation operation);
+
+    /// <summary>The last <paramref name="count"/> operations of the archive history, newest first.</summary>
+    IReadOnlyList<ArchiveOperation> ListArchiveOperations(int count);
 }

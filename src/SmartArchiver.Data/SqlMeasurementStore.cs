@@ -89,6 +89,29 @@ internal sealed class SqlMeasurementStore : IMeasurementStore
             .ToList());
     }
 
+    public void SaveArchiveOperation(ArchiveOperation operation)
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+        EnsureCreated();
+        Execute(db =>
+        {
+            db.ArchiveOperations.Add(operation);
+            db.SaveChanges();
+        });
+    }
+
+    public IReadOnlyList<ArchiveOperation> ListArchiveOperations(int count)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(count, 1);
+        EnsureCreated();
+        return Execute(db => db.ArchiveOperations
+            .AsNoTracking()
+            .OrderByDescending(o => o.StartedAtUtc)
+            .ThenByDescending(o => o.Id)
+            .Take(count)
+            .ToList());
+    }
+
     private void Execute(Action<SmartArchiverDbContext> action) =>
         Execute(db =>
         {

@@ -28,4 +28,12 @@ internal sealed class DisabledMeasurementStore : IMeasurementStore
     public Experiment? GetExperiment(int id) => null;
 
     public IReadOnlyList<Experiment> ListExperiments(ExperimentKind kind) => [];
+
+    public void SaveArchiveOperation(ArchiveOperation operation) => ArgumentNullException.ThrowIfNull(operation);
+
+    public IReadOnlyList<ArchiveOperation> ListArchiveOperations(int count)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(count, 1);
+        return [];
+    }
 }

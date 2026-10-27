@@ -22,6 +22,66 @@ namespace SmartArchiver.Data.Migrations
 
             SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
 
+            modelBuilder.Entity("SmartArchiver.Data.Entities.ArchiveOperation", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<long>("ArchiveBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<int>("CompressedFiles")
+                        .HasColumnType("int");
+
+                    b.Property<double>("ElapsedSeconds")
+                        .HasColumnType("float");
+
+                    b.Property<string>("ErrorCode")
+                        .HasMaxLength(20)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(20)");
+
+                    b.Property<int>("FileCount")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Operation")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.Property<long>("OriginalBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime>("StartedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<bool>("Succeeded")
+                        .HasColumnType("bit");
+
+                    b.Property<int>("VolumeCount")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("StartedAtUtc");
+
+                    b.ToTable("ArchiveOperations", t =>
+                        {
+                            t.HasCheckConstraint("CK_ArchiveOperations_Error", "([Succeeded] = 1 AND [ErrorCode] IS NULL) OR ([Succeeded] = 0 AND [ErrorCode] IS NOT NULL AND LEN([ErrorCode]) > 0)");
+
+                            t.HasCheckConstraint("CK_ArchiveOperations_Files", "[FileCount] >= 0 AND [CompressedFiles] BETWEEN 0 AND [FileCount]");
+
+                            t.HasCheckConstraint("CK_ArchiveOperations_Operation", "[Operation] IN ('Pack', 'Unpack')");
+
+                            t.HasCheckConstraint("CK_ArchiveOperations_Sizes", "[OriginalBytes] >= 0 AND [ArchiveBytes] >= 0 AND [VolumeCount] >= 0");
+
+                            t.HasCheckConstraint("CK_ArchiveOperations_Time", "[ElapsedSeconds] >= 0");
+                        });
+                });
+
             modelBuilder.Entity("SmartArchiver.Data.Entities.Experiment", b =>
                 {
                     b.Property<int>("Id")
