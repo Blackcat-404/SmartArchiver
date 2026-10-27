@@ -1163,3 +1163,50 @@ private static void RecordHistory(ArchiveOperation operation, System.Diagnostics
 }
 ```
 
+## 12. Дані для обов'язкових таблиць звіту
+
+**Промпт:**
+
+> У звіті 5 обов'язкових таблиць: розбір потоку, вплив кожного блоку тракту, ДП проти жадібного пакування першого тому, порядок стиснення й шифрування, збіжність ГА проти випадкового пошуку. Інтеграція має будувати їх однією командою з БД. Що з цього треба додати в базу і як зробити так, щоб таблиці будувалися автоматично і були відтворювані? Дай приклад коду.
+
+**Відповідь:**
+
+**Межа відповідальності.** Хай шар даних повертає готові рядки кожної таблиці, а генератор звіту лише форматує їх у Markdown чи CSV. Тоді обчислення (коефіцієнти, зміна Q, найкраща пристосованість досі) покриваються тестами без БД, а звіт гарантовано збігається з даними.
+
+**Відсутні дані.** Для «впливу блоків» і «порядку шифрування» потрібні окремі таблиці з обмеженнями. У впливі блоків варто зашити в CHECK визначення метрики: якщо хоч один файл не відновився, Q = 0.
+
+**Відтворюваність.** Біля кожної таблиці потрібні номер, дата й коміт експерименту, з якого вона взята. Брати слід найновіший експеримент свого виду, у якому є рядки, бо деякі експерименти того ж виду зберігають результати лише в JSON.
+
+**Чесне порівняння ГА з випадковим пошуком** будується за кількістю обчислень пристосованості, а не за номером покоління:
+
+```csharp
+foreach (IGrouping<SearchAlgorithm, GeneticIndividual> algorithm in experiment.GeneticIndividuals
+    .GroupBy(i => i.Algorithm)
+    .OrderBy(g => g.Key))
+{
+    int evaluations = 0;
+    double bestSoFar = double.NegativeInfinity;
+    foreach (IGrouping<int, GeneticIndividual> generation in algorithm.GroupBy(i => i.Generation).OrderBy(g => g.Key))
+    {
+        evaluations += generation.Count();
+        double best = generation.Max(i => i.Fitness);
+        bestSoFar = Math.Max(bestSoFar, best);
+        rows.Add(new ConvergenceRow(algorithm.Key, generation.Key, evaluations, best, generation.Average(i => i.Fitness), bestSoFar));
+    }
+}
+```
+
+Вибір експерименту для таблиці:
+
+```csharp
+foreach (Experiment summary in store.ListExperiments(kind).Reverse())
+{
+    Experiment? experiment = store.GetExperiment(summary.Id);
+    IReadOnlyList<TRow> table = experiment is null ? [] : rows(experiment);
+    if (table.Count > 0)
+        return new ReportTable<TRow>(
+            new ReportSource(experiment!.Id, experiment.StartedAtUtc, experiment.CommitHash, experiment.Dataset), table);
+}
+return new ReportTable<TRow>(null, []);
+```
+
