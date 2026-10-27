@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.Security.Cryptography;
+using SmartArchiver.Core;
 
 namespace SmartArchiver.Analysis;
 
@@ -25,7 +26,7 @@ public sealed record PredictorOptions(
 /// identically on every machine. Encoded data starts with <see cref="ModelId"/>, so data packed with other weights
 /// is rejected instead of being decoded into garbage.
 /// </remarks>
-public sealed class BytePredictor
+public sealed class BytePredictor : IResidualCoder
 {
     public const int ModelIdSize = 8;
 
@@ -144,8 +145,9 @@ public sealed class BytePredictor
     {
         var encoded = new byte[ModelIdSize + data.Length];
         BinaryPrimitives.WriteUInt64BigEndian(encoded, ModelId);
+        var guesses = new GuessTable(this);
         for (int i = 0; i < data.Length; i++)
-            encoded[ModelIdSize + i] = (byte)(data[i] - Predict(data[..i]));
+            encoded[ModelIdSize + i] = (byte)(data[i] - guesses.Predict(data[..i]));
         return encoded;
     }
 
@@ -160,8 +162,9 @@ public sealed class BytePredictor
 
         ReadOnlySpan<byte> residuals = encoded[ModelIdSize..];
         var data = new byte[residuals.Length];
+        var guesses = new GuessTable(this);
         for (int i = 0; i < data.Length; i++)
-            data[i] = (byte)(residuals[i] + Predict(data.AsSpan(0, i)));
+            data[i] = (byte)(residuals[i] + guesses.Predict(data.AsSpan(0, i)));
         return data;
     }
 
@@ -178,6 +181,45 @@ public sealed class BytePredictor
         catch (ArgumentException ex)
         {
             throw new InvalidDataException($"The model does not fit the predictor: {ex.Message}", ex);
+        }
+    }
+
+    /// <summary>
+    /// The guess depends only on the last k bytes, so during one Encode or Decode the network runs once per distinct
+    /// context and the answer is remembered. Each call has its own table: nothing is shared between threads, and
+    /// every call pays for its own guesses, so measured times stay honest.
+    /// </summary>
+    private sealed class GuessTable
+    {
+        /// <summary>256² contexts take 128 KB; 256³ would take 32 MB, so longer contexts are not remembered.</summary>
+        private const int MaxRememberedContext = 2;
+
+        private readonly BytePredictor predictor;
+        private readonly short[]? guesses;
+
+        public GuessTable(BytePredictor predictor)
+        {
+            this.predictor = predictor;
+            if (predictor.ContextBytes <= MaxRememberedContext)
+            {
+                guesses = new short[1 << (8 * predictor.ContextBytes)];
+                Array.Fill(guesses, (short)-1);
+            }
+        }
+
+        public byte Predict(ReadOnlySpan<byte> history)
+        {
+            int k = predictor.ContextBytes;
+            if (guesses is null || history.Length < k)
+                return predictor.Predict(history);
+
+            int context = 0;
+            for (int back = 0; back < k; back++)
+                context = context << 8 | history[history.Length - 1 - back];
+            short guess = guesses[context];
+            if (guess < 0)
+                guesses[context] = guess = predictor.Predict(history);
+            return (byte)guess;
         }
     }
 

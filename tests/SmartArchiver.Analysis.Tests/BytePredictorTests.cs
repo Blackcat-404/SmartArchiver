@@ -111,6 +111,34 @@ public class BytePredictorTests
         Assert.True(Entropy(residuals) > Entropy(noise) - 0.01);
     }
 
+    [Theory]
+    [MemberData(nameof(Inputs))]
+    public void Encode_GivesTheResidualOfPredictingEachByteOnItsOwn(byte[] data)
+    {
+        // Encode remembers the guess for each context it has seen; the guesses must stay exactly those of Predict.
+        BytePredictor predictor = TrainedOnText.Value;
+
+        byte[] residuals = predictor.Encode(data)[BytePredictor.ModelIdSize..];
+
+        Assert.Equal(
+            Enumerable.Range(0, data.Length).Select(i => (byte)(data[i] - predictor.Predict(data.AsSpan(0, i)))),
+            residuals);
+    }
+
+    [Fact]
+    public void Encode_NoiseWithAlmostEveryContext_GivesTheResidualsOfPredict()
+    {
+        BytePredictor predictor = TrainedOnText.Value;
+        byte[] data = Noise(200_000, seed: 9);
+
+        byte[] residuals = predictor.Encode(data)[BytePredictor.ModelIdSize..];
+
+        Assert.Equal(
+            Enumerable.Range(0, data.Length).Select(i => (byte)(data[i] - predictor.Predict(data.AsSpan(0, i)))),
+            residuals);
+        Assert.Equal(data, predictor.Decode(predictor.Encode(data)));
+    }
+
     [Fact]
     public void Predict_LooksOnlyAtTheLastContextBytes()
     {
