@@ -15,6 +15,20 @@ public enum BlockSplitMode
     Dp,
 }
 
+/// <summary>Що аналізатор оцінює, обираючи стратегію стиснення.</summary>
+public enum StrategyScope
+{
+    /// <summary>Одна стратегія на весь файл.</summary>
+    File,
+
+    /// <summary>
+    /// Кожен блок отримує свою стратегію: блок, який аналізатор вважає нестисканим, зберігається без спроби LZ77.
+    /// Тип файлу (file_type) і далі визначає аналіз усього файлу. Формат не змінюється: рішення записується
+    /// в block_flags кожного блоку.
+    /// </summary>
+    Block,
+}
+
 /// <summary>Обмеження й алгоритм для запису архіву кількома томами.</summary>
 /// <param name="MaxVolumeBytes">Найбільший розмір одного тому з урахуванням 32 байтів HMAC.</param>
 public sealed record VolumeOptions(
@@ -43,11 +57,14 @@ public sealed class ArchiveWriter
 
     public BlockSplitMode SplitMode { get; }
 
+    public StrategyScope Scope { get; }
+
     public ArchiveWriter(
         int blockSize = FormatConstants.DefaultBlockSize,
         IFileAnalyzer? analyzer = null,
         Lz77ParseMode parseMode = Lz77ParseMode.Lazy,
-        BlockSplitMode splitMode = BlockSplitMode.Fixed)
+        BlockSplitMode splitMode = BlockSplitMode.Fixed,
+        StrategyScope scope = StrategyScope.File)
     {
         if (blockSize <= 0)
             throw new ArgumentOutOfRangeException(nameof(blockSize), "Розмір блока має бути додатним.");
@@ -59,11 +76,16 @@ public sealed class ArchiveWriter
             throw new ArgumentOutOfRangeException(nameof(splitMode));
         if (splitMode == BlockSplitMode.Dp && blockSize % DpBoundaryStep != 0)
             throw new ArgumentException($"Для ДП-розбиття розмір блока має бути кратним {DpBoundaryStep}.", nameof(blockSize));
+        if (!Enum.IsDefined(scope))
+            throw new ArgumentOutOfRangeException(nameof(scope));
+        if (scope == StrategyScope.Block && splitMode == BlockSplitMode.Dp)
+            throw new ArgumentException("Стратегія по блоках потребує фіксованих блоків: ДП обирає межі вже після стиснення.", nameof(scope));
 
         BlockSize = blockSize;
         Analyzer = analyzer;
         ParseMode = parseMode;
         SplitMode = splitMode;
+        Scope = scope;
     }
 
     /// <summary>
@@ -169,9 +191,13 @@ public sealed class ArchiveWriter
             strategy = analysis.Strategy;
         }
 
-        List<PreparedBlock> blocks = strategy == CompressionStrategy.Lz77Huffman && data.Length > 0
-            ? CompressBlocks(data)
-            : StoreBlocks(data);
+        List<PreparedBlock> blocks = Analyzer is not null && Scope == StrategyScope.Block
+            ? CompressBlocksSeparately(data)
+            : strategy == CompressionStrategy.Lz77Huffman && data.Length > 0
+                ? CompressBlocks(data)
+                : StoreBlocks(data);
+        if (Scope == StrategyScope.Block)
+            strategy = blocks.TrueForAll(b => b.IsStored) ? CompressionStrategy.NoCompression : CompressionStrategy.Lz77Huffman;
 
         // Файл, у якому жоден блок не вдалося стиснути, чесно позначається як нестиснений.
         if (strategy == CompressionStrategy.Lz77Huffman && blocks.TrueForAll(b => b.IsStored))
@@ -191,6 +217,28 @@ public sealed class ArchiveWriter
         {
             Lz77PreparedBlock block = prepared[i];
             blocks.Add(new PreparedBlock(i, block.RawLength, block.CodedBytes, block.IsStored));
+        }
+        return blocks;
+    }
+
+    /// <summary>
+    /// Стратегія по блоках: аналізатор оцінює кожен блок окремо. Блок, який він вважає нестисканим, зберігається
+    /// без спроби LZ77; решта кодується, і блок без виграшу все одно зберігається як є.
+    /// </summary>
+    private List<PreparedBlock> CompressBlocksSeparately(byte[] data)
+    {
+        List<PreparedBlock> blocks = StoreBlocks(data);
+        for (int i = 0; i < blocks.Count; i++)
+        {
+            byte[] raw = blocks[i].CodedBytes;   // блок ще не стиснений, тож це сирі байти
+            FileAnalysis analysis = Analyzer!.Analyze(raw);
+            if (!Enum.IsDefined(analysis.Strategy))
+                throw new ArchiveException(ErrorCode.E_CODE, $"Аналізатор повернув невідому стратегію: {analysis.Strategy}.");
+            if (analysis.Strategy == CompressionStrategy.NoCompression)
+                continue;
+
+            Lz77PreparedBlock coded = Lz77CompressionService.PrepareFixedBlocks(raw, ParseMode, raw.Length)[0];
+            blocks[i] = new PreparedBlock(i, raw.Length, coded.CodedBytes, coded.IsStored);
         }
         return blocks;
     }
