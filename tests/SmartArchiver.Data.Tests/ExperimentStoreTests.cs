@@ -244,6 +244,13 @@ public class ExperimentStoreTests
         };
 
         Assert.Throws<DatabaseException>(() => store.SaveExperiment(experiment));
+
+        // One transaction: the experiment and the results that were valid are rolled back too.
+        Assert.Empty(store.ListExperiments(experiment.Kind));
+        using var db = database.CreateContext();
+        Assert.Equal(0, db.ParsingResults.Count() + db.PackingResults.Count() + db.TrainingRuns.Count()
+            + db.PredictionResults.Count() + db.StrategyResults.Count() + db.GeneticIndividuals.Count()
+            + db.BlockImpactResults.Count() + db.EncryptionOrderResults.Count());
     }
 
     [DatabaseTheory]
@@ -279,6 +286,11 @@ public class ExperimentStoreTests
         }
 
         Assert.Throws<DatabaseException>(() => store.SaveRun(run));
+
+        // The run and its files are saved together or not at all.
+        Assert.Equal(0, store.CountRuns());
+        using var db = database.CreateContext();
+        Assert.Equal(0, db.MeasurementFileResults.Count());
     }
 
     private static Experiment With(Experiment experiment, Action<Experiment> change)
