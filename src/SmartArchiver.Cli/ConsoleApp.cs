@@ -91,6 +91,8 @@ internal static class ConsoleApp
             case "measure" when args.Length <= 3:
                 MeasureQ(args.Length > 1 ? args[1] : "Datasets", args.Length > 2 ? args[2] : null);
                 return 0;
+            case "export-ga" when args.Length == 3:
+                return ExportGeneticJournal(args[1], args[2]);
             default:
                 Console.WriteLine("Використання:");
                 Console.WriteLine("  smartarchiver                            інтерактивне меню");
@@ -107,6 +109,7 @@ internal static class ConsoleApp
                 Console.WriteLine("  smartarchiver experiment <тека>            порівняти Greedy та Lazy на Datasets");
                 Console.WriteLine("  smartarchiver pack-experiment [датасет] [місткість тому] [team_config.json]  ДП-рюкзак проти жадібного пакування томів");
                 Console.WriteLine("  smartarchiver measure [датасет] [team_config.json]  виміряти Q на всьому корпусі, результат у БД");
+                Console.WriteLine("  smartarchiver export-ga <id експерименту> <файл.csv>  журнал еволюції ГА з БД у CSV");
                 return 1;
         }
     }
@@ -1005,6 +1008,34 @@ internal static class ConsoleApp
     /// </summary>
     private static IMeasurementStore OpenMeasurementStore() =>
         MeasurementStore.Open(DatabaseSettings.ReadConnectionString(AppContext.BaseDirectory));
+
+    /// <summary>Журнал еволюції ГА (усі хромосоми й пристосованість) з БД у CSV, який зберігається в репозиторії.</summary>
+    private static int ExportGeneticJournal(string experimentId, string csvPath)
+    {
+        if (!int.TryParse(experimentId, NumberStyles.None, CultureInfo.InvariantCulture, out int id))
+        {
+            Write($"[ПОМИЛКА] Номер експерименту має бути цілим числом: {experimentId}", ConsoleColor.Red);
+            return 1;
+        }
+        IMeasurementStore store = OpenMeasurementStore();
+        if (!store.IsEnabled)
+        {
+            Write("База даних вимкнена: журнал ГА зберігається лише в ній.", ConsoleColor.Yellow);
+            return 1;
+        }
+
+        Experiment? experiment = store.GetExperiment(id);
+        if (experiment is not { Kind: ExperimentKind.Genetic })
+        {
+            Write($"[ПОМИЛКА] Експерименту ГА з номером {id} немає в базі.", ConsoleColor.Red);
+            return 1;
+        }
+
+        using (var writer = new StreamWriter(csvPath, append: false, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false)))
+            GeneticJournalCsv.Write(experiment.GeneticIndividuals, writer);
+        Write($"[OK] {experiment.GeneticIndividuals.Count} хромосом записано в {Path.GetFullPath(csvPath)}", ConsoleColor.Green);
+        return 0;
+    }
 
     /// <summary>Показує ознаки, за якими класифікатор розрізнятиме типи файлів.</summary>
     private static void AnalyzeFile(string path)
