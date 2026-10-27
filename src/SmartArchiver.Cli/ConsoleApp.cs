@@ -91,6 +91,9 @@ internal static class ConsoleApp
             case "measure" when args.Length <= 3:
                 MeasureQ(args.Length > 1 ? args[1] : "Datasets", args.Length > 2 ? args[2] : null);
                 return 0;
+            case "history" when args.Length <= 2:
+                ShowHistory(args.Length > 1 ? HistoryCount(args[1]) : 20);
+                return 0;
             case "export-ga" when args.Length == 3:
                 return ExportGeneticJournal(args[1], args[2]);
             default:
@@ -109,6 +112,7 @@ internal static class ConsoleApp
                 Console.WriteLine("  smartarchiver experiment <тека>            порівняти Greedy та Lazy на Datasets");
                 Console.WriteLine("  smartarchiver pack-experiment [датасет] [місткість тому] [team_config.json]  ДП-рюкзак проти жадібного пакування томів");
                 Console.WriteLine("  smartarchiver measure [датасет] [team_config.json]  виміряти Q на всьому корпусі, результат у БД");
+                Console.WriteLine("  smartarchiver history [кількість]           останні операції з історії архівацій (без імен файлів і паролів)");
                 Console.WriteLine("  smartarchiver export-ga <id експерименту> <файл.csv>  журнал еволюції ГА з БД у CSV");
                 return 1;
         }
@@ -836,8 +840,27 @@ internal static class ConsoleApp
 
         // Повний тракт: аналіз → блоки → LZ77 → Гаффман → пакування → AES → HMAC → томи.
         var options = new PackOptions(ReadPassword(confirm: true), new FileAnalyzer(), blockSize, volumeSize);
-        IReadOnlyList<PreparedFile> prepared = ArchivePipeline.Prepare(inputs, options);
-        IReadOnlyList<byte[]> volumes = ArchivePipeline.Seal(prepared, options);
+        var history = new ArchiveOperation
+        {
+            StartedAtUtc = DateTime.UtcNow,
+            Operation = ArchiveOperationKind.Pack,
+            FileCount = inputs.Count,
+            OriginalBytes = inputs.Sum(i => (long)i.Data.Length),
+        };
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        IReadOnlyList<PreparedFile> prepared;
+        IReadOnlyList<byte[]> volumes;
+        try
+        {
+            prepared = ArchivePipeline.Prepare(inputs, options);
+            volumes = ArchivePipeline.Seal(prepared, options);
+        }
+        catch (ArchiveException ex)
+        {
+            RecordHistory(history, watch, ex.Code.ToString());
+            throw;
+        }
+        watch.Stop();
         var outputs = new List<string>();
         if (volumeSize > 0)
         {
@@ -860,6 +883,10 @@ internal static class ConsoleApp
         // Одразу читаємо назад (з перевіркою HMAC і CRC32) і порівнюємо з оригіналом.
         ArchiveResult<IReadOnlyList<ExtractedFile>> check = ArchivePipeline.TryUnpack(volumes, options.Password);
         bool identical = check.Ok && SameContent(inputs, check.Value!);
+        history.CompressedFiles = prepared.Count(f => f.Strategy == CompressionStrategy.Lz77Huffman);
+        history.ArchiveBytes = volumes.Sum(v => (long)v.Length);
+        history.VolumeCount = volumes.Count;
+        RecordHistory(history, watch, identical ? null : check.Error?.ToString() ?? "E_VERIFY");
 
         long originalSize = inputs.Sum(i => (long)i.Data.Length);
         long archiveSize = volumes.Sum(v => (long)v.Length);
@@ -952,8 +979,36 @@ internal static class ConsoleApp
 
     private static void UnpackFile(string archivePath, string outputDir)
     {
-        // Атомарно: або всі файли, або жодного; наявні файли не перезаписуються (див. ArchivePipeline.Extract).
-        IReadOnlyList<ExtractedFile> files = ArchivePipeline.Extract(LoadVolumes(archivePath), ReadPassword(confirm: false), outputDir);
+        List<byte[]> volumes = LoadVolumes(archivePath);
+        string password = ReadPassword(confirm: false);
+        var history = new ArchiveOperation
+        {
+            StartedAtUtc = DateTime.UtcNow,
+            Operation = ArchiveOperationKind.Unpack,
+            ArchiveBytes = volumes.Sum(v => (long)v.Length),
+            VolumeCount = volumes.Count,
+        };
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        IReadOnlyList<ExtractedFile> files;
+        try
+        {
+            // Атомарно: або всі файли, або жодного; наявні файли не перезаписуються (див. ArchivePipeline.Extract).
+            files = ArchivePipeline.Extract(volumes, password, outputDir);
+        }
+        catch (ArchiveException ex)
+        {
+            RecordHistory(history, watch, ex.Code.ToString());
+            throw;
+        }
+        catch (IOException)
+        {
+            RecordHistory(history, watch, "E_IO");
+            throw;
+        }
+        history.FileCount = files.Count;
+        history.CompressedFiles = files.Count(f => f.Strategy == CompressionStrategy.Lz77Huffman);
+        history.OriginalBytes = files.Sum(f => (long)f.Data.Length);
+        RecordHistory(history, watch, errorCode: null);
 
         Console.WriteLine();
         Write($"[OK] Розпаковано {files.Count} файл(ів) у {Path.GetFullPath(outputDir)}", ConsoleColor.Green);
@@ -1008,6 +1063,56 @@ internal static class ConsoleApp
     /// </summary>
     private static IMeasurementStore OpenMeasurementStore() =>
         MeasurementStore.Open(DatabaseSettings.ReadConnectionString(AppContext.BaseDirectory));
+
+    /// <summary>
+    /// Додає операцію в історію архівацій. Історія не повинна заважати самій архівації: без БД нічого не пишеться,
+    /// а недоступна БД дає лише попередження. Імен файлів, шляхів і пароля в історії немає.
+    /// </summary>
+    private static void RecordHistory(ArchiveOperation operation, System.Diagnostics.Stopwatch watch, string? errorCode)
+    {
+        operation.ElapsedSeconds = watch.Elapsed.TotalSeconds;
+        operation.Succeeded = errorCode is null;
+        operation.ErrorCode = errorCode;
+        try
+        {
+            IMeasurementStore store = OpenMeasurementStore();
+            if (store.IsEnabled)
+                store.SaveArchiveOperation(operation);
+        }
+        catch (DatabaseException ex)
+        {
+            Write($"[УВАГА] Операцію не записано в історію: {ex.Message}", ConsoleColor.Yellow);
+        }
+    }
+
+    private static int HistoryCount(string text) =>
+        int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out int count) && count > 0
+            ? count
+            : throw new ArgumentException($"Кількість має бути додатним цілим числом: {text}");
+
+    /// <summary>Останні операції з історії архівацій, найновіші зверху.</summary>
+    private static void ShowHistory(int count)
+    {
+        IMeasurementStore store = OpenMeasurementStore();
+        if (!store.IsEnabled)
+        {
+            Write("База даних вимкнена: історія архівацій зберігається лише в ній.", ConsoleColor.Yellow);
+            return;
+        }
+
+        IReadOnlyList<ArchiveOperation> operations = store.ListArchiveOperations(count);
+        Console.WriteLine();
+        Write($"Історія архівацій (останні {operations.Count})", ConsoleColor.Cyan);
+        Console.WriteLine($"  {"Час (UTC)",-19}  {"Операція",-8} {"Файлів",6} {"Стиснено",8} {"Розмір",12} {"Архів",12} {"Томів",5} {"Час, с",8}  Результат");
+        foreach (ArchiveOperation o in operations)
+        {
+            string result = o.Succeeded ? "OK" : o.ErrorCode!;
+            Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
+                $"  {o.StartedAtUtc:yyyy-MM-dd HH:mm:ss}  {o.Operation,-8} {o.FileCount,6} {o.CompressedFiles,8} {o.OriginalBytes,12} {o.ArchiveBytes,12} {o.VolumeCount,5} {o.ElapsedSeconds,8:F3}  {result}"));
+        }
+        if (operations.Count == 0)
+            Console.WriteLine("  (порожньо)");
+    }
 
     /// <summary>Журнал еволюції ГА (усі хромосоми й пристосованість) з БД у CSV, який зберігається в репозиторії.</summary>
     private static int ExportGeneticJournal(string experimentId, string csvPath)
