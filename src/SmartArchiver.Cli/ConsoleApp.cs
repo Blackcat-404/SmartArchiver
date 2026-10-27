@@ -1294,14 +1294,35 @@ internal static class ConsoleApp
         }
     }
 
+    /// <summary>
+    /// Два набори: файли датасету як є і ті самі файли з вбудованими стисненими даними (файл групи 5 у середині,
+    /// як картинка в документі). Другий набір показує, що дає стратегія по блоках на змішаних файлах.
+    /// </summary>
     private static void RunStrategyExperiment(string datasetPath)
     {
-        CultureInfo c = CultureInfo.InvariantCulture;
         IReadOnlyList<GroupedFile> files = [.. LabeledDataset.ListFiles(datasetPath)
             .Select(f => new GroupedFile(f.Label, new ArchiveInput(Path.GetFileName(f.FullPath), File.ReadAllBytes(f.FullPath))))];
+        RunStrategySet(files, DatasetName(datasetPath), "files as they are");
 
+        GroupedFile[] pictures = [.. files.Where(f => f.Group == (int)FileKind.AlreadyCompressed)];
+        if (pictures.Length == 0)
+            return;
+        GroupedFile[] hosts = [.. files.Where(f => f.Group != (int)FileKind.AlreadyCompressed)];
+        IReadOnlyList<GroupedFile> embedded = [.. hosts.Select((host, i) =>
+        {
+            byte[] data = host.File.Data, picture = pictures[i % pictures.Length].File.Data;
+            int middle = data.Length / 2;
+            return host with { File = host.File with { Data = [.. data.AsSpan(0, middle), .. picture, .. data.AsSpan(middle)] } };
+        })];
+        RunStrategySet(embedded, DatasetName(datasetPath) + " + embedded",
+            "files of groups 0-4 and 6 with a group 5 file inserted in the middle, like a picture in a document");
+    }
+
+    private static void RunStrategySet(IReadOnlyList<GroupedFile> files, string dataset, string description)
+    {
+        CultureInfo c = CultureInfo.InvariantCulture;
         Console.WriteLine();
-        Write($"Фіксована стратегія проти класифікатора: {files.Count} файлів, архів на кожну групу", ConsoleColor.Cyan);
+        Write($"Фіксована стратегія проти класифікатора: {files.Count} файлів ({description}), архів на кожну групу", ConsoleColor.Cyan);
         IReadOnlyList<StrategyMeasurement> results = StrategyComparison.Run(files, new FileAnalyzer());
 
         Console.WriteLine($"  {"Група",5} {"Варіант",-12} {"Стиснуто",9} {"Було, Б",9} {"Архів, Б",9} {"Запак., с",10} {"Розпак., с",11} {"Відновлено",11}");
@@ -1328,9 +1349,11 @@ internal static class ConsoleApp
         {
             Kind = ExperimentKind.Strategy,
             StartedAtUtc = DateTime.UtcNow,
-            Dataset = Path.GetFullPath(datasetPath),
+            CommitHash = GitCommit(),
+            Dataset = dataset,
             ParametersJson = JsonSerializer.Serialize(new
             {
+                files = description,
                 blockSize = FormatConstants.DefaultBlockSize,
                 parseMode = "Lazy",
                 archive = "one single-volume archive per group, unencrypted",
@@ -1370,6 +1393,7 @@ internal static class ConsoleApp
         ArchiveVariant.Stored => "без стиснення",
         ArchiveVariant.Fixed => "фіксована",
         ArchiveVariant.Classifier => "класифікатор",
+        ArchiveVariant.ClassifierPerBlock => "по блоках",
         _ => variant.ToString(),
     };
 
