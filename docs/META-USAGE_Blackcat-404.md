@@ -1066,3 +1066,51 @@ private static StrategyMeasurement Measure(
         allRestored);
 }
 ```
+
+## 10. Журнал еволюції ГА в базі даних і в CSV
+
+**Промпт:**
+
+> На CP3 ГА запускатиме інший учасник, а журнал еволюції має бути в БД ще до першого запуску: покоління, пристосованість, хромосоми, плюс експорт у CSV, який лежатиме в репозиторії. З журналу потім будуються таблиця «ГА проти випадкового пошуку» і фронт Парето. Як спроєктувати таблицю, якщо хромосома буває з 3 генів і повна, і як зробити CSV, однаковий на будь-якій машині? Дай приклад коду.
+
+**Відповідь:**
+
+**Що зберігати.** Краще кожну перевірену хромосому, а не лише найкращу в поколінні. Найкраща й середня пристосованість по поколіннях виводяться з повного журналу, а навпаки не вийде: фронт Парето потребує обох складових Q (S і T) кожної хромосоми. ГА і випадковий пошук варто писати в один експеримент з колонкою «алгоритм», тоді обидва варіанти порівнюються в межах одного запуску.
+
+**Гени.** Хромосома змінюється між рівнями (3 гени, потім повна), тому окрема колонка на ген вимагала б міграції на кожну зміну. JSON-об'єкт в одній колонці гнучкий, а SQL Server перевіряє його коректність через `ISJSON`. Діапазони окремих генів тоді перевіряє сам ГА.
+
+**Цілісність.** CHECK-обмеження на межі значень і унікальний індекс (експеримент, алгоритм, покоління, особина), щоб та сама особина не потрапила в журнал двічі.
+
+```csharp
+private static void ConfigureGenetic(EntityTypeBuilder<GeneticIndividual> individual)
+{
+    individual.Property(r => r.Algorithm).HasConversion<string>().HasMaxLength(20);
+    individual.HasIndex(r => new { r.ExperimentId, r.Algorithm, r.Generation, r.Individual }).IsUnique();
+    individual.ToTable(t =>
+    {
+        t.HasCheckConstraint("CK_GeneticIndividuals_Algorithm", OneOf<SearchAlgorithm>("Algorithm"));
+        t.HasCheckConstraint("CK_GeneticIndividuals_Position", "[Generation] >= 0 AND [Individual] >= 0");
+        t.HasCheckConstraint("CK_GeneticIndividuals_Fitness", "[Fitness] >= 0 AND [S] BETWEEN 0 AND 1 AND [T] BETWEEN 0 AND 1");
+        t.HasCheckConstraint("CK_GeneticIndividuals_Genes", "ISJSON([GenesJson]) = 1 AND LEFT([GenesJson], 1) = '{'");
+    });
+}
+```
+
+**CSV.** Фіксовані колонки, далі по колонці на ген у порядку першої появи; якщо в хромосомі гена немає, клітинка порожня. Щоб файл був однаковий на будь-якій машині: числа в інваріантній культурі (інакше в українській локалі вийде `0,5` замість `0.5`, і кома зламає CSV), рядки закінчуються `\n`, значення з комою чи лапками екрануються за RFC 4180.
+
+```csharp
+foreach ((GeneticIndividual individual, Dictionary<string, string> genes) in rows)
+{
+    writer.Write(string.Join(',',
+        individual.Algorithm.ToString(),
+        individual.Generation.ToString(CultureInfo.InvariantCulture),
+        individual.Individual.ToString(CultureInfo.InvariantCulture),
+        individual.Fitness.ToString("R", CultureInfo.InvariantCulture),
+        individual.S.ToString("R", CultureInfo.InvariantCulture),
+        individual.T.ToString("R", CultureInfo.InvariantCulture)));
+    foreach (string name in geneNames)
+        writer.Write("," + (genes.TryGetValue(name, out string? value) ? Escape(value) : ""));
+    writer.Write('\n');
+}
+```
+
