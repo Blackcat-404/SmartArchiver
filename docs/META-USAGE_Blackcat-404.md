@@ -1307,3 +1307,48 @@ public byte Predict(ReadOnlySpan<byte> history)
 
 **Чого чекати.** Якщо LZ77 + Гаффман уже використовують повтори й частоти, прогноз «найімовірнішого байта» може не дати виграшу в розмірі, а на даних з багатьма різними контекстами коштуватиме помітного часу. Такий результат треба показати по групах і пояснити.
 
+## 15. Адаптивна стратегія всередині одного файлу
+
+**Промпт:**
+
+> На експертному рівні кожен блок файлу має класифікуватися окремо й отримувати свою стратегію. Формат архіву фіксований, а `ArchiveWriter` належить Інтеграції. Як це зробити без зміни формату, як переконатися тестами, що відкинутий блок справді не стискається, і як показати ефект, якщо в датасеті немає змішаних файлів? Дай приклад коду.
+
+**Відповідь:**
+
+**Формат.** Специфікація вже має `block_flags` з бітом `NO_COMPRESSION` для кожного блоку, і читач перевіряє його для кожного блоку окремо. Отже, рішення по блоках записується без нових полів. Тип файлу (`file_type`) і далі визначає аналіз усього файлу, а стратегія файлу дорівнює `Lz77Huffman`, якщо стиснено хоч один блок.
+
+```csharp
+private List<PreparedBlock> CompressBlocksSeparately(byte[] data)
+{
+    List<PreparedBlock> blocks = StoreBlocks(data);
+    for (int i = 0; i < blocks.Count; i++)
+    {
+        byte[] raw = blocks[i].CodedBytes;   // блок ще не стиснений, тож це сирі байти
+        FileAnalysis analysis = Analyzer!.Analyze(raw);
+        if (!Enum.IsDefined(analysis.Strategy))
+            throw new ArchiveException(ErrorCode.E_CODE, $"Аналізатор повернув невідому стратегію: {analysis.Strategy}.");
+        if (analysis.Strategy == CompressionStrategy.NoCompression)
+            continue;
+
+        Lz77PreparedBlock coded = Lz77CompressionService.PrepareFixedBlocks(raw, ParseMode, raw.Length)[0];
+        blocks[i] = new PreparedBlock(i, raw.Length, coded.CodedBytes, coded.IsStored);
+    }
+    return blocks;
+}
+```
+
+**Тест на пропуск.** Блок шуму зберігається як є і після спроби стиснення, тож за результатом пропуск не видно. Потрібен аналізатор, який каже «не стискати» навіть про текст. Тоді пропуск видно в розмірі:
+
+```csharp
+[Fact]
+public void BlockScope_BlockTheAnalyzerRejects_IsNotCompressedEvenIfItWouldShrink()
+{
+    PreparedFile file = Prepare(Text(3 * Block), StrategyScope.Block, new NeverCompress());
+
+    Assert.True(file.Blocks.All(b => b.IsStored));
+    Assert.Equal(3 * Block, file.CodedSize);
+}
+```
+
+**Вимір.** Змішані файли можна зібрати з наявних: вставити вже стиснений файл у середину текстового, як картинку в документ. Порівнювати варто з обома альтернативами: класифікатором на весь файл і стратегією «завжди стискати». Якщо архів і так зберігає без змін блоки без виграшу, «не стискати» економить лише час, а помилка класифікатора на змішаному блоці коштує розміру. Тож результат може бути не на користь нової стратегії, і це треба показати.
+
