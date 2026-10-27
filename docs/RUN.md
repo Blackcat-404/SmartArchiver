@@ -35,6 +35,7 @@ dotnet run --project src/SmartArchiver.Cli -- prediction-experiment Datasets
 dotnet run --project src/SmartArchiver.Cli -- strategy-experiment Datasets
 dotnet run --project src/SmartArchiver.Cli -- pack-experiment Datasets 65536 [team_config.json]
 dotnet run --project src/SmartArchiver.Cli -- measure Datasets [team_config.json]
+dotnet run --project src/SmartArchiver.Cli -- history 20
 dotnet run --project src/SmartArchiver.Cli -- export-ga <id експерименту> ga.csv
 ```
 

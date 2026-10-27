@@ -1114,3 +1114,52 @@ foreach ((GeneticIndividual individual, Dictionary<string, string> genes) in row
 }
 ```
 
+## 11. Історія архівацій без імен файлів і паролів
+
+**Промпт:**
+
+> Потрібна історія архівацій у БД: кожна запаковка й розпаковка, щоб потім показати її в інтерфейсі. Але в базі не має бути паролів, ключів і відкритих імен файлів, а архіватор має працювати навіть без бази. Як це спроєктувати і як перевірити тестами? Дай приклад коду.
+
+**Відповідь:**
+
+**Захист через схему.** Надійніше не мати колонок, куди могло б потрапити ім'я чи пароль, ніж фільтрувати їх перед записом. У таблиці лише числа, дата, вид операції й код помилки. Тест через рефлексію перевіряє, що інших текстових полів у сутності немає, тож нова колонка з ім'ям не пройде непомітно.
+
+```csharp
+[Fact]
+public void ArchiveOperation_HasNoTextBesidesTheErrorCode()
+{
+    // History must not keep file names, paths, passwords or keys: there is simply no column that could hold them.
+    Assert.Equal(
+        [nameof(ArchiveOperation.ErrorCode)],
+        typeof(ArchiveOperation).GetProperties().Where(p => p.PropertyType == typeof(string)).Select(p => p.Name));
+}
+```
+
+**Невдалі операції теж записуються**, з кодом помилки. Узгодженість гарантує CHECK: код є тоді й лише тоді, коли операція не вдалася. Тут є пастка тризначної логіки SQL: порівняння з NULL дає «невідомо», а CHECK пропускає «невідомо». Тому NULL треба перевіряти явно:
+
+```csharp
+t.HasCheckConstraint("CK_ArchiveOperations_Error",
+    "([Succeeded] = 1 AND [ErrorCode] IS NULL) OR ([Succeeded] = 0 AND [ErrorCode] IS NOT NULL AND LEN([ErrorCode]) > 0)");
+```
+
+**Незалежність від бази.** Запис в історію йде після операції. Без бази він нічого не робить, а помилка бази перетворюється на попередження, тож архів однаково створюється.
+
+```csharp
+private static void RecordHistory(ArchiveOperation operation, System.Diagnostics.Stopwatch watch, string? errorCode)
+{
+    operation.ElapsedSeconds = watch.Elapsed.TotalSeconds;
+    operation.Succeeded = errorCode is null;
+    operation.ErrorCode = errorCode;
+    try
+    {
+        IMeasurementStore store = OpenMeasurementStore();
+        if (store.IsEnabled)
+            store.SaveArchiveOperation(operation);
+    }
+    catch (DatabaseException ex)
+    {
+        Write($"[УВАГА] Операцію не записано в історію: {ex.Message}", ConsoleColor.Yellow);
+    }
+}
+```
+
