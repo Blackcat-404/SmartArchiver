@@ -79,6 +79,9 @@ internal static class ConsoleApp
             case "prediction-experiment" when args.Length <= 2:
                 RunPredictionExperiment(args.Length > 1 ? args[1] : "Datasets");
                 return 0;
+            case "prediction-q" when args.Length <= 3:
+                RunPredictionQ(args.Length > 1 ? args[1] : "Datasets", args.Length > 2 ? args[2] : null);
+                return 0;
             case "strategy-experiment" when args.Length <= 2:
                 RunStrategyExperiment(args.Length > 1 ? args[1] : "Datasets");
                 return 0;
@@ -108,6 +111,7 @@ internal static class ConsoleApp
                 Console.WriteLine("  smartarchiver train-classifier [датасет] [модель.json]  навчити класифікатор (за замовчуванням Datasets)");
                 Console.WriteLine("  smartarchiver train-predictor [датасет] [модель.json]   навчити передбачення наступного байта");
                 Console.WriteLine("  smartarchiver prediction-experiment [датасет]          вплив передбачення на ентропію і розмір");
+                Console.WriteLine("  smartarchiver prediction-q [датасет] [team_config.json]  Q з прогнозом байта і без, по групах");
                 Console.WriteLine("  smartarchiver strategy-experiment [датасет]            фіксована стратегія проти класифікатора");
                 Console.WriteLine("  smartarchiver experiment <тека>            порівняти Greedy та Lazy на Datasets");
                 Console.WriteLine("  smartarchiver pack-experiment [датасет] [місткість тому] [team_config.json]  ДП-рюкзак проти жадібного пакування томів");
@@ -1203,6 +1207,93 @@ internal static class ConsoleApp
     /// Пакує кожну групу датасету в архів трьома способами (без стиснення, завжди LZ77 + Гаффман,
     /// як вирішить класифікатор), розпаковує, порівнює й пише розміри та час у базу.
     /// </summary>
+    /// <summary>
+    /// Q кожної групи через повний тракт (аналіз, LZ77, Гаффман, пакування, AES, HMAC) двічі: з файлами як є
+    /// і із залишками прогнозу. Час прогнозу й відновлення байтів входить у T.
+    /// </summary>
+    private static void RunPredictionQ(string datasetPath, string? configPath)
+    {
+        CultureInfo c = CultureInfo.InvariantCulture;
+        TeamConfig config = configPath is null
+            ? new TeamConfig(DefaultMeasureVolumeBytes, PackingPriorities.Default)
+            : TeamConfig.Load(configPath);
+        (List<ArchiveInput> inputs, List<byte> groups) = LoadCorpus(datasetPath);
+        IReadOnlyList<GroupedFile> files = [.. inputs.Select((input, i) => new GroupedFile(groups[i], input))];
+        var options = new PackOptions(MeasurementPassword, new FileAnalyzer(), MaxVolumeBytes: config.MaxVolumeBytes, Priorities: config.Priorities);
+        BytePredictor predictor = BytePredictor.BuiltIn;
+        const int repeats = 3;
+
+        Console.WriteLine();
+        Write($"Q з прогнозом (модель {predictor.ModelId:X16}) і без: {files.Count} файлів, повний тракт на кожну групу", ConsoleColor.Cyan);
+        DateTime started = DateTime.UtcNow;
+        IReadOnlyList<PredictionQMeasurement> results = PredictionQComparison.Run(
+            files, predictor, options, config.Alpha, config.Beta, config.TRefSeconds, repeats);
+
+        Console.WriteLine($"  {"Група",5} {"Файлів",6} {"Було, Б",9} {"Архів, Б",9} {"з прогн., Б",11} {"Час, с",7} {"з прогн., с",11} {"Q",7} {"Q з прогн.",10} {"ΔQ",8}");
+        foreach (IGrouping<int, PredictionQMeasurement> group in results.GroupBy(r => r.Group))
+        {
+            PredictionQMeasurement plain = group.Single(r => !r.Predicted), predicted = group.Single(r => r.Predicted);
+            Console.WriteLine(string.Format(c, "  {0,5} {1,6} {2,9} {3,9} {4,11} {5,7:F3} {6,11:F3} {7,7:F4} {8,10:F4} {9,8:+0.0000;-0.0000;0}",
+                group.Key, plain.FileCount, plain.OriginalBytes, plain.ArchiveBytes, predicted.ArchiveBytes,
+                plain.Seconds, predicted.Seconds, plain.Score.Q, predicted.Score.Q, predicted.Score.Q - plain.Score.Q));
+        }
+        Console.WriteLine(string.Format(c, "  α = {0}, β = {1}, t_ref = {2} с; час: медіана з {3} прогонів після розігріву",
+            config.Alpha, config.Beta, config.TRefSeconds, repeats));
+        if (configPath is null)
+            Write("  [УВАГА] α, β, t_ref і місткість тому стандартні (заглушка): справжні задає team_config.json.", ConsoleColor.Yellow);
+        if (results.All(r => r.AllRestored))
+            Write("[OK] Усі файли відновлено побайтово в обох варіантах.", ConsoleColor.Green);
+        else
+            Write("[ПОМИЛКА] Не всі файли відновлено: Q таких груп дорівнює 0.", ConsoleColor.Red);
+
+        var experiment = new Experiment
+        {
+            Kind = ExperimentKind.PredictionQ,
+            StartedAtUtc = started,
+            CommitHash = GitCommit(),
+            Dataset = DatasetName(datasetPath),
+            ParametersJson = JsonSerializer.Serialize(new
+            {
+                model = predictor.ModelId.ToString("X16", c),
+                contextBytes = predictor.ContextBytes,
+                alpha = config.Alpha,
+                beta = config.Beta,
+                tRefSeconds = config.TRefSeconds,
+                maxVolumeBytes = config.MaxVolumeBytes,
+                config = configPath is null ? "defaults (placeholder)" : Path.GetFileName(configPath),
+                repeats,
+                pipeline = "analysis on residuals, LZ77 + Huffman, DP knapsack, AES-256-CTR + HMAC-SHA256",
+            }),
+        };
+        foreach (PredictionQMeasurement r in results)
+        {
+            experiment.PredictionQResults.Add(new PredictionQResult
+            {
+                Group = (byte)r.Group,
+                Predicted = r.Predicted,
+                FileCount = r.FileCount,
+                OriginalBytes = r.OriginalBytes,
+                ArchiveBytes = r.ArchiveBytes,
+                ElapsedSeconds = r.Seconds,
+                AllRestored = r.AllRestored,
+                S = r.Score.S,
+                T = r.Score.T,
+                Q = r.Score.Q,
+            });
+        }
+
+        IMeasurementStore store = OpenMeasurementStore();
+        if (store.IsEnabled)
+        {
+            store.SaveExperiment(experiment);
+            Write($"[OK] Результати збережено в базі даних (експеримент №{experiment.Id}).", ConsoleColor.Green);
+        }
+        else
+        {
+            Write("[УВАГА] База даних вимкнена: результати виведено лише в консоль.", ConsoleColor.Yellow);
+        }
+    }
+
     private static void RunStrategyExperiment(string datasetPath)
     {
         CultureInfo c = CultureInfo.InvariantCulture;
