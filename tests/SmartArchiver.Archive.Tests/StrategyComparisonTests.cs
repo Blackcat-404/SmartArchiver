@@ -35,8 +35,8 @@ public class StrategyComparisonTests
         IReadOnlyList<StrategyMeasurement> results = StrategyComparison.Run(Files(), new TextOnlyAnalyzer());
 
         Assert.Equal(
-            [(0, StrategyVariant.Stored), (0, StrategyVariant.Fixed), (0, StrategyVariant.Classifier),
-             (5, StrategyVariant.Stored), (5, StrategyVariant.Fixed), (5, StrategyVariant.Classifier)],
+            [(0, StrategyVariant.Stored), (0, StrategyVariant.Fixed), (0, StrategyVariant.Classifier), (0, StrategyVariant.ClassifierPerBlock),
+             (5, StrategyVariant.Stored), (5, StrategyVariant.Fixed), (5, StrategyVariant.Classifier), (5, StrategyVariant.ClassifierPerBlock)],
             results.Select(r => (r.Group, r.Variant)));
     }
 
@@ -67,6 +67,38 @@ public class StrategyComparisonTests
         Assert.Equal(2, Get(0, StrategyVariant.Classifier).CompressedFiles);
         Assert.True(Get(0, StrategyVariant.Fixed).ArchiveBytes < Get(0, StrategyVariant.Stored).ArchiveBytes);
         Assert.Equal(Get(0, StrategyVariant.Fixed).ArchiveBytes, Get(0, StrategyVariant.Classifier).ArchiveBytes);
+        Assert.Equal(2, Get(0, StrategyVariant.ClassifierPerBlock).CompressedFiles);
+    }
+
+    [Fact]
+    public void Run_PerBlock_CompressesTheTextInsideAFileThatLooksCompressed()
+    {
+        // The stand-in classifier sees random bytes in the first 4 KB of the whole file and stores it;
+        // per block it finds the text block and compresses it.
+        byte[] mixed = [.. Noise(4096), .. Text[..4096]];
+        IReadOnlyList<StrategyMeasurement> results = StrategyComparison.Run(
+            [new GroupedFile(4, new ArchiveInput("mixed.bin", mixed))], new HeadOnlyAnalyzer(), blockSize: 4096, repeats: 1);
+        StrategyMeasurement Get(StrategyVariant variant) => results.Single(r => r.Variant == variant);
+
+        Assert.Equal(0, Get(StrategyVariant.Classifier).CompressedFiles);
+        Assert.Equal(1, Get(StrategyVariant.ClassifierPerBlock).CompressedFiles);
+        Assert.True(Get(StrategyVariant.ClassifierPerBlock).ArchiveBytes < Get(StrategyVariant.Classifier).ArchiveBytes);
+        Assert.All(results, r => Assert.True(r.AllRestored));
+    }
+
+    /// <summary>Classifier stand-in that looks only at the first 4 KB: text if over 90% of it is printable.</summary>
+    private sealed class HeadOnlyAnalyzer : IFileAnalyzer
+    {
+        public FileAnalysis Analyze(ReadOnlySpan<byte> data)
+        {
+            ReadOnlySpan<byte> head = data[..Math.Min(data.Length, 4096)];
+            int printable = 0;
+            foreach (byte b in head)
+                printable += b is (byte)'\n' or >= 0x20 and <= 0x7E ? 1 : 0;
+            return printable > head.Length * 0.9
+                ? new FileAnalysis(FileKind.Text, 0.9, CompressionStrategy.Lz77Huffman)
+                : new FileAnalysis(FileKind.AlreadyCompressed, 0.9, CompressionStrategy.NoCompression);
+        }
     }
 
     [Fact]

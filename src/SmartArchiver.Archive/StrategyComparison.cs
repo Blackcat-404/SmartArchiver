@@ -13,6 +13,9 @@ public enum StrategyVariant
 
     /// <summary>The analyzer (classifier) decides per file.</summary>
     Classifier,
+
+    /// <summary>The analyzer decides for every block of a file separately (<see cref="StrategyScope.Block"/>).</summary>
+    ClassifierPerBlock,
 }
 
 /// <summary>A file of a dataset and its group (file_type 0..6).</summary>
@@ -33,7 +36,7 @@ public sealed record StrategyMeasurement(
     bool AllRestored);
 
 /// <summary>
-/// Experiment "fixed strategy against the classifier's strategy": every group is packed into an archive three ways
+/// Experiment "fixed strategy against the classifier's strategy": every group is packed into an archive four ways
 /// (<see cref="StrategyVariant"/>), unpacked and compared byte for byte; size and both times are measured.
 /// </summary>
 /// <remarks>
@@ -85,7 +88,7 @@ public static class StrategyComparison
         int group, ArchiveInput[] files, StrategyVariant variant, IFileAnalyzer classifier, int blockSize)
     {
         // The true group is written as file_type unless the classifier is the one deciding.
-        ArchiveInput[] inputs = variant == StrategyVariant.Classifier
+        ArchiveInput[] inputs = variant is StrategyVariant.Classifier or StrategyVariant.ClassifierPerBlock
             ? [.. files.Select(f => f with { Kind = FileKind.Unknown })]
             : [.. files.Select(f => f with { Kind = (FileKind)group })];
         IFileAnalyzer? analyzer = variant switch
@@ -96,7 +99,8 @@ public static class StrategyComparison
         };
 
         var watch = Stopwatch.StartNew();
-        byte[] archive = new ArchiveWriter(blockSize, analyzer).Build(inputs);
+        StrategyScope scope = variant == StrategyVariant.ClassifierPerBlock ? StrategyScope.Block : StrategyScope.File;
+        byte[] archive = new ArchiveWriter(blockSize, analyzer, scope: scope).Build(inputs);
         double packSeconds = watch.Elapsed.TotalSeconds;
 
         watch.Restart();
