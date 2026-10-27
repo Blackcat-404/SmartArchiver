@@ -1210,3 +1210,54 @@ foreach (Experiment summary in store.ListExperiments(kind).Reverse())
 return new ReportTable<TRow>(null, []);
 ```
 
+## 13. Тести бази даних: схема з нуля, відкат, цілісність
+
+**Промпт:**
+
+> Потрібні тести БД: обмеження цілісності, відкат транзакції при помилці і створення схеми з нуля. Частина вже є, але один раз модель змінили без нової міграції, і це виявилося лише на тестах з базою. Як перевірити, що міграції створюють рівно ту схему, що описана в моделі, і що невдалий запис нічого не лишає? Дай приклад коду.
+
+**Відповідь:**
+
+**Пропущена міграція** ловиться без сервера: EF Core порівнює модель зі знімком останньої міграції.
+
+```csharp
+[Fact]
+public void Model_HasNoChangesMissingFromTheMigrations()
+{
+    // Runs without a server: a change to the model without "dotnet ef migrations add" fails here, not at first start.
+    using SmartArchiverDbContext db = new DesignTimeDbContextFactory().CreateDbContext([]);
+
+    Assert.False(db.Database.HasPendingModelChanges());
+}
+```
+
+**Схема з нуля.** Порожню базу після міграцій можна порівняти з моделлю повністю: таблиці, CHECK, зовнішні ключі, унікальні індекси. Такий тест не треба оновлювати з кожною новою таблицею. Дві пастки: CHECK-обмеження є лише в design-time моделі, а `sys.indexes` повертає й індекси системних таблиць, тож запит треба обмежити таблицями користувача.
+
+```csharp
+// CHECK constraints are kept only in the design-time model, not in the one used at run time.
+IEntityType[] entities = [.. db.GetService<IDesignTimeModel>().Model.GetEntityTypes()];
+
+Assert.Equal(
+    entities.SelectMany(e => e.GetCheckConstraints()).Select(c => c.Name!).Order(StringComparer.Ordinal),
+    Names(db, "SELECT name AS Value FROM sys.check_constraints"));
+```
+
+**Відкат міграцій.** Відкотити всі міграції до порожньої бази і застосувати знову: так виконується кожен `Down()`.
+
+```csharp
+migrator.Migrate(Migration.InitialDatabase);
+Assert.Empty(Names(db, "SELECT name AS Value FROM sys.tables WHERE name <> '__EFMigrationsHistory'"));
+
+migrator.Migrate();
+Assert.Equal(db.Database.GetMigrations(), db.Database.GetAppliedMigrations());
+```
+
+**Відкат транзакції.** Мало перевірити, що запис кинув виняток. Треба ще переконатися, що не лишилося нічого, навіть коректних рядків того самого запису:
+
+```csharp
+Assert.Throws<DatabaseException>(() => store.SaveExperiment(experiment));
+
+// One transaction: the experiment and the results that were valid are rolled back too.
+Assert.Empty(store.ListExperiments(experiment.Kind));
+```
+
