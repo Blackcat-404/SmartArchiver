@@ -108,6 +108,27 @@ public class ExperimentStoreTests
     }
 
     [DatabaseFact]
+    public void SaveExperiment_BlockImpactAndEncryptionOrder_AreReadBackUnchanged()
+    {
+        using var database = new TestDatabase();
+        var store = MeasurementStore.Open(database.ConnectionString);
+        Experiment impact = BlockImpactExperiment(), order = EncryptionOrderExperiment();
+
+        store.SaveExperiment(impact);
+        store.SaveExperiment(order);
+
+        Assert.Equal(
+            impact.BlockImpactResults.Select(r => (r.DisabledBlock, r.OriginalBytes, r.ArchiveBytes, r.ElapsedSeconds,
+                r.AllRestored, r.S, r.T, r.Q)),
+            store.GetExperiment(impact.Id)!.BlockImpactResults.OrderBy(r => r.Id).Select(r => (r.DisabledBlock,
+                r.OriginalBytes, r.ArchiveBytes, r.ElapsedSeconds, r.AllRestored, r.S, r.T, r.Q)));
+        Assert.Equal(
+            order.EncryptionOrderResults.Select(r => (r.Group, r.OriginalBytes, r.CompressThenEncryptBytes, r.EncryptThenCompressBytes)),
+            store.GetExperiment(order.Id)!.EncryptionOrderResults.OrderBy(r => r.Id)
+                .Select(r => (r.Group, r.OriginalBytes, r.CompressThenEncryptBytes, r.EncryptThenCompressBytes)));
+    }
+
+    [DatabaseFact]
     public void ListExperiments_ReturnsOnlyThatKind_OldestFirst()
     {
         using var database = new TestDatabase();
@@ -181,6 +202,12 @@ public class ExperimentStoreTests
     [InlineData("genetic negative fitness")]
     [InlineData("genetic genes not json")]
     [InlineData("genetic same individual twice")]
+    [InlineData("block impact Q above zero without restore")]
+    [InlineData("block impact T above 1")]
+    [InlineData("block impact same block twice")]
+    [InlineData("block impact unknown block")]
+    [InlineData("encryption order group above 6")]
+    [InlineData("encryption order negative size")]
     public void SaveExperiment_ValueOutsideConstraint_IsRejected(string violation)
     {
         using var database = new TestDatabase();
@@ -207,6 +234,12 @@ public class ExperimentStoreTests
             "genetic negative fitness" => With(GeneticExperiment(), e => e.GeneticIndividuals[0].Fitness = -0.1),
             "genetic genes not json" => With(GeneticExperiment(), e => e.GeneticIndividuals[0].GenesJson = "window=4096"),
             "genetic same individual twice" => With(GeneticExperiment(), e => e.GeneticIndividuals[1].Individual = 0),
+            "block impact Q above zero without restore" => With(BlockImpactExperiment(), e => e.BlockImpactResults[1].AllRestored = false),
+            "block impact T above 1" => With(BlockImpactExperiment(), e => e.BlockImpactResults[0].T = 1.5),
+            "block impact same block twice" => With(BlockImpactExperiment(), e => e.BlockImpactResults[1].DisabledBlock = PipelineBlock.None),
+            "block impact unknown block" => With(BlockImpactExperiment(), e => e.BlockImpactResults[0].DisabledBlock = (PipelineBlock)42),
+            "encryption order group above 6" => With(EncryptionOrderExperiment(), e => e.EncryptionOrderResults[0].Group = 7),
+            "encryption order negative size" => With(EncryptionOrderExperiment(), e => e.EncryptionOrderResults[0].EncryptThenCompressBytes = -1),
             _ => throw new ArgumentOutOfRangeException(nameof(violation)),
         };
 
@@ -307,6 +340,29 @@ public class ExperimentStoreTests
             new() { Algorithm = SearchAlgorithm.Genetic, Generation = 0, Individual = 0, GenesJson = """{"window":4096,"min_match":3,"no_compress_threshold":7.5}""", Fitness = 0.61, S = 0.72, T = 0.5 },
             new() { Algorithm = SearchAlgorithm.Genetic, Generation = 0, Individual = 1, GenesJson = """{"window":1024,"min_match":4,"no_compress_threshold":7.9}""", Fitness = 0.58, S = 0.66, T = 0.5 },
             new() { Algorithm = SearchAlgorithm.Random, Generation = 0, Individual = 0, GenesJson = """{"window":256,"min_match":5,"no_compress_threshold":6}""", Fitness = 0.4, S = 0.3, T = 0.5 },
+        ];
+        return e;
+    }
+
+    private static Experiment BlockImpactExperiment()
+    {
+        Experiment e = NewExperiment(ExperimentKind.BlockImpact);
+        e.BlockImpactResults =
+        [
+            new() { DisabledBlock = PipelineBlock.None, OriginalBytes = 930_000, ArchiveBytes = 200_000, ElapsedSeconds = 1.2, AllRestored = true, S = 0.82, T = 0.45, Q = 0.64 },
+            new() { DisabledBlock = PipelineBlock.Lz77, OriginalBytes = 930_000, ArchiveBytes = 600_000, ElapsedSeconds = 0.6, AllRestored = true, S = 0.61, T = 0.62, Q = 0.62 },
+            new() { DisabledBlock = PipelineBlock.Encryption, OriginalBytes = 930_000, ArchiveBytes = 199_900, ElapsedSeconds = 0.4, AllRestored = true, S = 0.82, T = 0.71, Q = 0.77 },
+        ];
+        return e;
+    }
+
+    private static Experiment EncryptionOrderExperiment()
+    {
+        Experiment e = NewExperiment(ExperimentKind.EncryptionOrder);
+        e.EncryptionOrderResults =
+        [
+            new() { Group = 0, OriginalBytes = 156_000, CompressThenEncryptBytes = 4_200, EncryptThenCompressBytes = 156_400 },
+            new() { Group = 5, OriginalBytes = 76_000, CompressThenEncryptBytes = 76_300, EncryptThenCompressBytes = 76_300 },
         ];
         return e;
     }

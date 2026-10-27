@@ -82,6 +82,95 @@ namespace SmartArchiver.Data.Migrations
                         });
                 });
 
+            modelBuilder.Entity("SmartArchiver.Data.Entities.BlockImpactResult", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<bool>("AllRestored")
+                        .HasColumnType("bit");
+
+                    b.Property<long>("ArchiveBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("DisabledBlock")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.Property<double>("ElapsedSeconds")
+                        .HasColumnType("float");
+
+                    b.Property<int>("ExperimentId")
+                        .HasColumnType("int");
+
+                    b.Property<long>("OriginalBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<double>("Q")
+                        .HasColumnType("float");
+
+                    b.Property<double>("S")
+                        .HasColumnType("float");
+
+                    b.Property<double>("T")
+                        .HasColumnType("float");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExperimentId", "DisabledBlock")
+                        .IsUnique();
+
+                    b.ToTable("BlockImpactResults", t =>
+                        {
+                            t.HasCheckConstraint("CK_BlockImpactResults_Block", "[DisabledBlock] IN ('None', 'Analysis', 'Lz77', 'Huffman', 'Packing', 'Encryption', 'Prediction')");
+
+                            t.HasCheckConstraint("CK_BlockImpactResults_Q", "[S] BETWEEN 0 AND 1 AND [T] BETWEEN 0 AND 1 AND [Q] >= 0");
+
+                            t.HasCheckConstraint("CK_BlockImpactResults_Restored", "[AllRestored] = 1 OR [Q] = 0");
+
+                            t.HasCheckConstraint("CK_BlockImpactResults_Sizes", "[OriginalBytes] >= 0 AND [ArchiveBytes] >= 0 AND [ElapsedSeconds] >= 0");
+                        });
+                });
+
+            modelBuilder.Entity("SmartArchiver.Data.Entities.EncryptionOrderResult", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<long>("CompressThenEncryptBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("EncryptThenCompressBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<int>("ExperimentId")
+                        .HasColumnType("int");
+
+                    b.Property<byte>("Group")
+                        .HasColumnType("tinyint");
+
+                    b.Property<long>("OriginalBytes")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExperimentId");
+
+                    b.ToTable("EncryptionOrderResults", t =>
+                        {
+                            t.HasCheckConstraint("CK_EncryptionOrderResults_Group", "[Group] <= 6");
+
+                            t.HasCheckConstraint("CK_EncryptionOrderResults_Sizes", "[OriginalBytes] >= 0 AND [CompressThenEncryptBytes] >= 0 AND [EncryptThenCompressBytes] >= 0");
+                        });
+                });
+
             modelBuilder.Entity("SmartArchiver.Data.Entities.Experiment", b =>
                 {
                     b.Property<int>("Id")
@@ -123,7 +212,7 @@ namespace SmartArchiver.Data.Migrations
                         {
                             t.HasCheckConstraint("CK_Experiments_Dataset", "LEN([Dataset]) > 0");
 
-                            t.HasCheckConstraint("CK_Experiments_Kind", "[Kind] IN ('Parsing', 'Packing', 'Training', 'Prediction', 'Strategy', 'Genetic')");
+                            t.HasCheckConstraint("CK_Experiments_Kind", "[Kind] IN ('Parsing', 'Packing', 'Training', 'Prediction', 'Strategy', 'Genetic', 'BlockImpact', 'EncryptionOrder')");
                         });
                 });
 
@@ -535,6 +624,28 @@ namespace SmartArchiver.Data.Migrations
                         });
                 });
 
+            modelBuilder.Entity("SmartArchiver.Data.Entities.BlockImpactResult", b =>
+                {
+                    b.HasOne("SmartArchiver.Data.Entities.Experiment", "Experiment")
+                        .WithMany("BlockImpactResults")
+                        .HasForeignKey("ExperimentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Experiment");
+                });
+
+            modelBuilder.Entity("SmartArchiver.Data.Entities.EncryptionOrderResult", b =>
+                {
+                    b.HasOne("SmartArchiver.Data.Entities.Experiment", "Experiment")
+                        .WithMany("EncryptionOrderResults")
+                        .HasForeignKey("ExperimentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Experiment");
+                });
+
             modelBuilder.Entity("SmartArchiver.Data.Entities.GeneticIndividual", b =>
                 {
                     b.HasOne("SmartArchiver.Data.Entities.Experiment", "Experiment")
@@ -614,6 +725,10 @@ namespace SmartArchiver.Data.Migrations
 
             modelBuilder.Entity("SmartArchiver.Data.Entities.Experiment", b =>
                 {
+                    b.Navigation("BlockImpactResults");
+
+                    b.Navigation("EncryptionOrderResults");
+
                     b.Navigation("GeneticIndividuals");
 
                     b.Navigation("PackingResults");

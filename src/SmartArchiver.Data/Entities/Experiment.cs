@@ -20,6 +20,12 @@ public enum ExperimentKind
 
     /// <summary>GA evolution journal, together with the random search it is compared with.</summary>
     Genetic,
+
+    /// <summary>Q of the corpus with each block of the pipeline switched off in turn.</summary>
+    BlockImpact,
+
+    /// <summary>Compression before encryption against compression after it.</summary>
+    EncryptionOrder,
 }
 
 /// <summary>
@@ -54,4 +60,8 @@ public sealed class Experiment
     public List<StrategyResult> StrategyResults { get; set; } = [];
 
     public List<GeneticIndividual> GeneticIndividuals { get; set; } = [];
+
+    public List<BlockImpactResult> BlockImpactResults { get; set; } = [];
+
+    public List<EncryptionOrderResult> EncryptionOrderResults { get; set; } = [];
 }

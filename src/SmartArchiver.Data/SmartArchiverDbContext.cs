@@ -33,6 +33,10 @@ public sealed class SmartArchiverDbContext(DbContextOptions<SmartArchiverDbConte
 
     public DbSet<ArchiveOperation> ArchiveOperations => Set<ArchiveOperation>();
 
+    public DbSet<BlockImpactResult> BlockImpactResults => Set<BlockImpactResult>();
+
+    public DbSet<EncryptionOrderResult> EncryptionOrderResults => Set<EncryptionOrderResult>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<MeasurementRun>(run =>
@@ -75,6 +79,10 @@ public sealed class SmartArchiverDbContext(DbContextOptions<SmartArchiverDbConte
             experiment.HasMany(e => e.StrategyResults).WithOne(r => r.Experiment)
                 .HasForeignKey(r => r.ExperimentId).OnDelete(DeleteBehavior.Cascade);
             experiment.HasMany(e => e.GeneticIndividuals).WithOne(r => r.Experiment)
+                .HasForeignKey(r => r.ExperimentId).OnDelete(DeleteBehavior.Cascade);
+            experiment.HasMany(e => e.BlockImpactResults).WithOne(r => r.Experiment)
+                .HasForeignKey(r => r.ExperimentId).OnDelete(DeleteBehavior.Cascade);
+            experiment.HasMany(e => e.EncryptionOrderResults).WithOne(r => r.Experiment)
                 .HasForeignKey(r => r.ExperimentId).OnDelete(DeleteBehavior.Cascade);
             experiment.ToTable(t =>
             {
@@ -123,6 +131,8 @@ public sealed class SmartArchiverDbContext(DbContextOptions<SmartArchiverDbConte
         modelBuilder.Entity<StrategyResult>(ConfigureStrategy);
         modelBuilder.Entity<GeneticIndividual>(ConfigureGenetic);
         modelBuilder.Entity<ArchiveOperation>(ConfigureHistory);
+        modelBuilder.Entity<BlockImpactResult>(ConfigureBlockImpact);
+        modelBuilder.Entity<EncryptionOrderResult>(ConfigureEncryptionOrder);
     }
 
     private static void ConfigurePrediction(EntityTypeBuilder<PredictionResult> result) => result.ToTable(t =>
@@ -176,6 +186,27 @@ public sealed class SmartArchiverDbContext(DbContextOptions<SmartArchiverDbConte
                 "([Succeeded] = 1 AND [ErrorCode] IS NULL) OR ([Succeeded] = 0 AND [ErrorCode] IS NOT NULL AND LEN([ErrorCode]) > 0)");
         });
     }
+
+    private static void ConfigureBlockImpact(EntityTypeBuilder<BlockImpactResult> result)
+    {
+        result.Property(r => r.DisabledBlock).HasConversion<string>().HasMaxLength(20);
+        result.HasIndex(r => new { r.ExperimentId, r.DisabledBlock }).IsUnique();
+        result.ToTable(t =>
+        {
+            t.HasCheckConstraint("CK_BlockImpactResults_Block", OneOf<PipelineBlock>("DisabledBlock"));
+            t.HasCheckConstraint("CK_BlockImpactResults_Sizes", "[OriginalBytes] >= 0 AND [ArchiveBytes] >= 0 AND [ElapsedSeconds] >= 0");
+            t.HasCheckConstraint("CK_BlockImpactResults_Q", "[S] BETWEEN 0 AND 1 AND [T] BETWEEN 0 AND 1 AND [Q] >= 0");
+            // The metric is 0 when any file was not restored.
+            t.HasCheckConstraint("CK_BlockImpactResults_Restored", "[AllRestored] = 1 OR [Q] = 0");
+        });
+    }
+
+    private static void ConfigureEncryptionOrder(EntityTypeBuilder<EncryptionOrderResult> result) => result.ToTable(t =>
+    {
+        t.HasCheckConstraint("CK_EncryptionOrderResults_Group", $"[Group] <= {MaxFileType}");
+        t.HasCheckConstraint("CK_EncryptionOrderResults_Sizes",
+            "[OriginalBytes] >= 0 AND [CompressThenEncryptBytes] >= 0 AND [EncryptThenCompressBytes] >= 0");
+    });
 
     /// <summary>CHECK that an enum stored as text holds one of its names; built from the enum so they cannot drift apart.</summary>
     private static string OneOf<TEnum>(string column) where TEnum : struct, Enum =>
