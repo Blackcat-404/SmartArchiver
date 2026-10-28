@@ -123,6 +123,20 @@ public class ReportTablesTests
     }
 
     [Fact]
+    public void ParetoFront_RemovesRowsDominatedInBothCompressionAndSpeed()
+    {
+        Experiment e = New(ExperimentKind.Genetic);
+        e.GeneticIndividuals =
+        [
+            new() { Algorithm = SearchAlgorithm.Genetic, Generation = 0, Individual = 0, GenesJson = "{}", Fitness = 0.6, S = 0.8, T = 0.4 },
+            new() { Algorithm = SearchAlgorithm.Genetic, Generation = 0, Individual = 1, GenesJson = "{}", Fitness = 0.7, S = 0.7, T = 0.7 },
+            new() { Algorithm = SearchAlgorithm.Genetic, Generation = 0, Individual = 2, GenesJson = "{}", Fitness = 0.4, S = 0.6, T = 0.3 },
+        ];
+
+        Assert.Equal([0, 1], ReportTables.ParetoFront(e).Select(row => row.Individual));
+    }
+
+    [Fact]
     public void Load_NoDatabase_GivesEmptyTablesWithoutSource()
     {
         ReportData data = ReportData.Load(MeasurementStore.Open(""));

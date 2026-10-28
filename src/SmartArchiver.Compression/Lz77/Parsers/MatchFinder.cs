@@ -17,18 +17,25 @@ internal sealed class MatchFinder
     private readonly int[] _head = new int[1 << HashBits];
     private readonly int[] _prev;
     private readonly int _maxChain;
+    private readonly int _window;
+    private readonly int _minMatch;
 
     public MatchFinder(byte[] data, int maxChain = DefaultMaxChain)
+        : this(data, new Lz77SearchOptions { SearchDepth = maxChain })
+    {
+    }
+
+    public MatchFinder(byte[] data, Lz77SearchOptions options)
     {
         // Перевіряємо коректність вхідних параметрів.
         ArgumentNullException.ThrowIfNull(data);
-
-        if (maxChain <= 0)
-            throw new ArgumentOutOfRangeException(nameof(maxChain),
-                "Глибина пошуку має бути додатною.");
+        ArgumentNullException.ThrowIfNull(options);
+        options.Validate();
 
         _data = data;
-        _maxChain = maxChain;
+        _maxChain = options.SearchDepth;
+        _window = options.SearchWindow;
+        _minMatch = options.MinMatchLength;
         _prev = new int[data.Length];
 
         Array.Fill(_head, -1);
@@ -62,7 +69,7 @@ internal sealed class MatchFinder
         distance = 0;
         length = 0;
 
-        if (pos + Lz77Limits.MinMatch > _data.Length)
+        if (pos + _minMatch > _data.Length)
             return false;
 
         int maxLen = Math.Min(Lz77Limits.MaxMatch, _data.Length - pos);
@@ -74,7 +81,7 @@ internal sealed class MatchFinder
             int dist = pos - candidate;
 
             // Ланцюжок упорядкований від найближчих до найдальших: далі будуть лише більші відстані.
-            if (dist > Lz77Limits.Window)
+            if (dist > _window)
                 break;
 
             int l = CommonPrefix(candidate, pos, maxLen);
@@ -91,7 +98,7 @@ internal sealed class MatchFinder
             candidate = _prev[candidate];
         }
 
-        return length >= Lz77Limits.MinMatch;
+        return length >= _minMatch;
     }
 
     private int CommonPrefix(int source, int pos, int maxLen)

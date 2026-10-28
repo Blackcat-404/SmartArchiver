@@ -7,9 +7,11 @@
   <Project Path="src/SmartArchiver.Core/SmartArchiver.Core.csproj" />
   <Project Path="src/SmartArchiver.Data/SmartArchiver.Data.csproj" />
   <Project Path="src/SmartArchiver.Security/SmartArchiver.Security.csproj" />
+  <Project Path="src/SmartArchiver.Optimization/SmartArchiver.Optimization.csproj" />
   <Project Path="tests/SmartArchiver.Analysis.Tests/SmartArchiver.Analysis.Tests.csproj" />
   <Project Path="tests/SmartArchiver.Archive.Tests/SmartArchiver.Archive.Tests.csproj" />
   <Project Path="tests/SmartArchiver.Compression.Tests/SmartArchiver.Compression.Tests.csproj" />
   <Project Path="tests/SmartArchiver.Data.Tests/SmartArchiver.Data.Tests.csproj" />
   <Project Path="tests/SmartArchiver.Security.Tests/SmartArchiver.Security.Tests.csproj" />
+  <Project Path="tests/SmartArchiver.Optimization.Tests/SmartArchiver.Optimization.Tests.csproj" />
 </Solution>

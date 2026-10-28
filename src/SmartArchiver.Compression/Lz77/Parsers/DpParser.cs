@@ -35,17 +35,23 @@ internal static class DpParser
 
     // Зберігаємо старий API без змін для коду і тестів CP2.
     public static List<Lz77Token> Parse(byte[] block, int maxChain = MatchFinder.DefaultMaxChain) =>
-        Parse(block, ParseCostModel.Fixed(), maxChain);
+        Parse(block, ParseCostModel.Fixed(), new Lz77SearchOptions { SearchDepth = maxChain });
 
     /// <summary>Оптимальний DP-розбір за заданою адитивною моделлю вартостей.</summary>
     internal static List<Lz77Token> Parse(byte[] block, ParseCostModel model,
         int maxChain = MatchFinder.DefaultMaxChain)
+        => Parse(block, model, new Lz77SearchOptions { SearchDepth = maxChain });
+
+    /// <summary>Оптимальний DP-розбір із параметризованим вікном, мінімальним збігом і глибиною пошуку.</summary>
+    internal static List<Lz77Token> Parse(byte[] block, ParseCostModel model, Lz77SearchOptions options)
     {
         ArgumentNullException.ThrowIfNull(model);
         ArgumentNullException.ThrowIfNull(block);
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxChain);
+        ArgumentNullException.ThrowIfNull(options);
+        options.Validate();
 
         int n = block.Length;
+        int minMatch = options.MinMatchLength;
         var result = new List<Lz77Token>();
         if (n == 0)
             return result;
@@ -83,7 +89,7 @@ internal static class DpParser
             int bestLength = 1;
             int longest = Math.Min(Lz77Limits.MaxMatch, n - pos);
 
-            if (longest >= Lz77Limits.MinMatch)
+            if (longest >= minMatch)
             {
                 Array.Clear(maxLengthByGroup);
                 Array.Clear(distanceByGroup);
@@ -92,10 +98,10 @@ internal static class DpParser
                 int candidate = previous[pos];
                 int checkedCount = 0;
 
-                while (candidate >= 0 && checkedCount++ < maxChain)
+                while (candidate >= 0 && checkedCount++ < options.SearchDepth)
                 {
                     int distance = pos - candidate;
-                    if (distance > Lz77Limits.Window)
+                    if (distance > options.SearchWindow)
                         break;
 
                     int code = ParseCostModel.DistanceCode(distance);
@@ -118,10 +124,10 @@ internal static class DpParser
 
                 // g(l) = lenCost(l) + cost[pos+l]. Префіксний мінімум
                 // дозволяє розглянути ВСІ довжини за O(1) на DIST-клас.
-                for (int length = Lz77Limits.MinMatch; length <= longest; length++)
+                for (int length = minMatch; length <= longest; length++)
                 {
                     long current = model.Length(length) + cost[pos + length];
-                    if (length == Lz77Limits.MinMatch || current <= minSuffixCost[length - 1])
+                    if (length == minMatch || current <= minSuffixCost[length - 1])
                     {
                         minSuffixCost[length] = current;
                         minSuffixLength[length] = length;
@@ -136,7 +142,7 @@ internal static class DpParser
                 for (int group = 0; group < maxLengthByGroup.Length; group++)
                 {
                     int availableLength = maxLengthByGroup[group];
-                    if (availableLength < Lz77Limits.MinMatch)
+                    if (availableLength < minMatch)
                         continue;
 
                     int distance = distanceByGroup[group];

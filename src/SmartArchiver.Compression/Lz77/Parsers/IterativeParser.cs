@@ -32,15 +32,22 @@ internal static class IterativeParser
         byte[] block,
         int maxIterations = 3,
         int maxChain = MatchFinder.DefaultMaxChain)
+        => Optimize(block, maxIterations, new Lz77SearchOptions { SearchDepth = maxChain });
+
+    internal static Result Optimize(
+        byte[] block,
+        int maxIterations,
+        Lz77SearchOptions options)
     {
         ArgumentNullException.ThrowIfNull(block);
+        ArgumentNullException.ThrowIfNull(options);
+        options.Validate();
         ArgumentOutOfRangeException.ThrowIfNegative(maxIterations);
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxChain);
         if (block.Length == 0)
             throw new ArgumentException("Порожній блок не кодується Huffman.", nameof(block));
 
         var watch = Stopwatch.StartNew();
-        List<Lz77Token> bestTokens = DpParser.Parse(block, maxChain);
+        List<Lz77Token> bestTokens = DpParser.Parse(block, ParseCostModel.Fixed(), options);
         byte[] bestBytes = Lz77BlockEncoder.Encode(bestTokens);
         watch.Stop();
 
@@ -56,7 +63,7 @@ internal static class IterativeParser
             watch.Restart();
             // Згладжені частоти тільки для оцінювання нових токенів.
             ParseCostModel model = ParseCostModel.FromTokens(bestTokens);
-            List<Lz77Token> candidate = DpParser.Parse(block, model, maxChain);
+            List<Lz77Token> candidate = DpParser.Parse(block, model, options);
             long estimatedBits = model.CalculateCost(candidate);
 
             // Навіть якщо токени не змінилися, зберігаємо крок у журналі.

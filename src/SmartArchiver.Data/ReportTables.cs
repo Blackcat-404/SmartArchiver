@@ -22,6 +22,16 @@ public sealed record EncryptionOrderRow(
 /// <param name="BestSoFar">Best fitness found in this and all earlier generations.</param>
 public sealed record ConvergenceRow(SearchAlgorithm Algorithm, int Generation, int Evaluations, double Best, double Mean, double BestSoFar);
 
+/// <summary>A non-dominated chromosome in the compression/speed objective plane.</summary>
+public sealed record ParetoRow(
+    SearchAlgorithm Algorithm,
+    int Generation,
+    int Individual,
+    string GenesJson,
+    double Fitness,
+    double S,
+    double T);
+
 /// <summary>The run-log fields of the experiment a report table was built from.</summary>
 public sealed record ReportSource(int ExperimentId, DateTime StartedAtUtc, string? CommitHash, string Dataset);
 
@@ -104,6 +114,48 @@ public static class ReportTables
             }
         }
         return rows;
+    }
+
+    /// <summary>Expert table: the Pareto front maximising compression and speed separately.</summary>
+    public static IReadOnlyList<ParetoRow> ParetoFront(Experiment experiment)
+    {
+        ArgumentNullException.ThrowIfNull(experiment);
+        List<GeneticIndividual> all = [.. experiment.GeneticIndividuals];
+        var front = new List<ParetoRow>();
+        for (int i = 0; i < all.Count; i++)
+        {
+            GeneticIndividual candidate = all[i];
+            bool dominated = false;
+            for (int j = 0; j < all.Count; j++)
+            {
+                if (i == j)
+                    continue;
+                GeneticIndividual other = all[j];
+                if (other.S >= candidate.S && other.T >= candidate.T &&
+                    (other.S > candidate.S || other.T > candidate.T))
+                {
+                    dominated = true;
+                    break;
+                }
+            }
+            if (!dominated)
+            {
+                front.Add(new ParetoRow(
+                    candidate.Algorithm,
+                    candidate.Generation,
+                    candidate.Individual,
+                    candidate.GenesJson,
+                    candidate.Fitness,
+                    candidate.S,
+                    candidate.T));
+            }
+        }
+        return [.. front
+            .OrderByDescending(row => row.S)
+            .ThenByDescending(row => row.T)
+            .ThenBy(row => row.Algorithm)
+            .ThenBy(row => row.Generation)
+            .ThenBy(row => row.Individual)];
     }
 
     private static double Ratio(long original, long encoded) => encoded == 0 ? 0 : (double)original / encoded;

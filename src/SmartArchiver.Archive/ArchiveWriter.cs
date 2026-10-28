@@ -59,12 +59,15 @@ public sealed class ArchiveWriter
 
     public StrategyScope Scope { get; }
 
+    public Lz77SearchOptions CompressionOptions { get; }
+
     public ArchiveWriter(
         int blockSize = FormatConstants.DefaultBlockSize,
         IFileAnalyzer? analyzer = null,
         Lz77ParseMode parseMode = Lz77ParseMode.Lazy,
         BlockSplitMode splitMode = BlockSplitMode.Fixed,
-        StrategyScope scope = StrategyScope.File)
+        StrategyScope scope = StrategyScope.File,
+        Lz77SearchOptions? compressionOptions = null)
     {
         if (blockSize <= 0)
             throw new ArgumentOutOfRangeException(nameof(blockSize), "Розмір блока має бути додатним.");
@@ -80,12 +83,15 @@ public sealed class ArchiveWriter
             throw new ArgumentOutOfRangeException(nameof(scope));
         if (scope == StrategyScope.Block && splitMode == BlockSplitMode.Dp)
             throw new ArgumentException("Стратегія по блоках потребує фіксованих блоків: ДП обирає межі вже після стиснення.", nameof(scope));
+        compressionOptions ??= new Lz77SearchOptions();
+        compressionOptions.Validate();
 
         BlockSize = blockSize;
         Analyzer = analyzer;
         ParseMode = parseMode;
         SplitMode = splitMode;
         Scope = scope;
+        CompressionOptions = compressionOptions;
     }
 
     /// <summary>
@@ -210,7 +216,12 @@ public sealed class ArchiveWriter
     {
         var prepared = SplitMode == BlockSplitMode.Dp
             ? Lz77CompressionService.PrepareDpBlocks(data, BlockSize, DpBoundaryStep)
-            : Lz77CompressionService.PrepareFixedBlocks(data, ParseMode, BlockSize);
+            : Lz77CompressionService.PrepareFixedBlocks(
+                data,
+                ParseMode,
+                BlockSize,
+                allowStored: CompressionOptions.AllowStoredBlocks,
+                searchOptions: CompressionOptions);
 
         var blocks = new List<PreparedBlock>(prepared.Count);
         for (int i = 0; i < prepared.Count; i++)
@@ -237,7 +248,12 @@ public sealed class ArchiveWriter
             if (analysis.Strategy == CompressionStrategy.NoCompression)
                 continue;
 
-            Lz77PreparedBlock coded = Lz77CompressionService.PrepareFixedBlocks(raw, ParseMode, raw.Length)[0];
+            Lz77PreparedBlock coded = Lz77CompressionService.PrepareFixedBlocks(
+                raw,
+                ParseMode,
+                raw.Length,
+                allowStored: CompressionOptions.AllowStoredBlocks,
+                searchOptions: CompressionOptions)[0];
             blocks[i] = new PreparedBlock(i, raw.Length, coded.CodedBytes, coded.IsStored);
         }
         return blocks;

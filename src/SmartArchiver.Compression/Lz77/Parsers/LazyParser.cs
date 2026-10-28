@@ -13,16 +13,24 @@ internal static class LazyParser
         byte[] block,
         int maxChain = MatchFinder.DefaultMaxChain,
         int minLazyGain = DefaultMinLazyGain)
+        => Parse(block, new Lz77SearchOptions { SearchDepth = maxChain }, minLazyGain);
+
+    internal static List<Lz77Token> Parse(
+        byte[] block,
+        Lz77SearchOptions options,
+        int minLazyGain = DefaultMinLazyGain)
     {
         ArgumentNullException.ThrowIfNull(block);
+        ArgumentNullException.ThrowIfNull(options);
+        options.Validate();
 
         // Перевіряємо, що глибина пошуку є додатною.
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxChain);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.SearchDepth);
 
         // Перевіряємо, що мінімальний приріст довжини є додатним.
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(minLazyGain);
 
-        var finder = new MatchFinder(block, maxChain);
+        var finder = new MatchFinder(block, options);
         var tokens = new List<Lz77Token>();
 
         int pos = 0;

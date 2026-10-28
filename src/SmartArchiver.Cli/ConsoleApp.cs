@@ -10,6 +10,7 @@ using SmartArchiver.Data.Entities;
 using ArchiveVariant = SmartArchiver.Archive.StrategyVariant;
 using DataVariant = SmartArchiver.Data.Entities.StrategyVariant;
 using SmartArchiver.Compression.Benchmarks;
+using SmartArchiver.Optimization;
 
 namespace SmartArchiver.Cli;
 
@@ -99,6 +100,12 @@ internal static class ConsoleApp
                 return 0;
             case "export-ga" when args.Length == 3:
                 return ExportGeneticJournal(args[1], args[2]);
+            case "genetic-experiment" when args.Length <= 4:
+                RunGeneticExperiment(
+                    args.Length > 1 && !args[1].Equals("full", StringComparison.OrdinalIgnoreCase) ? args[1] : "Datasets",
+                    args.Length > 2 && !args[2].Equals("full", StringComparison.OrdinalIgnoreCase) ? args[2] : null,
+                    args.Any(a => a.Equals("full", StringComparison.OrdinalIgnoreCase)));
+                return 0;
             default:
                 Console.WriteLine("Використання:");
                 Console.WriteLine("  smartarchiver                            інтерактивне меню");
@@ -118,6 +125,7 @@ internal static class ConsoleApp
                 Console.WriteLine("  smartarchiver measure [датасет] [team_config.json]  виміряти Q на всьому корпусі, результат у БД");
                 Console.WriteLine("  smartarchiver history [кількість]           останні операції з історії архівацій (без імен файлів і паролів)");
                 Console.WriteLine("  smartarchiver export-ga <id експерименту> <файл.csv>  журнал еволюції ГА з БД у CSV");
+                Console.WriteLine("  smartarchiver genetic-experiment [датасет] [team_config.json] [full]  ГА проти випадкового пошуку; full = повна хромосома і локальний пошук");
                 return 1;
         }
     }
@@ -1116,6 +1124,154 @@ internal static class ConsoleApp
         }
         if (operations.Count == 0)
             Console.WriteLine("  (порожньо)");
+    }
+
+    /// <summary>
+    /// Runs the basic three-gene GA and its equal-budget random baseline. With
+    /// the optional full argument it also searches the advanced chromosome,
+    /// compares local search and prints the S/T Pareto front.
+    /// </summary>
+    private static void RunGeneticExperiment(string datasetPath, string? configPath, bool full)
+    {
+        CultureInfo c = CultureInfo.InvariantCulture;
+        TeamConfig config = configPath is null
+            ? new TeamConfig(DefaultMeasureVolumeBytes, PackingPriorities.Default)
+            : TeamConfig.Load(configPath);
+        (List<ArchiveInput> inputs, List<byte> groups) = LoadCorpus(datasetPath);
+        var corpus = inputs.Select((input, index) => (input, groups[index])).ToList();
+        var baseOptions = new PackOptions(
+            MeasurementPassword,
+            new FileAnalyzer(),
+            MaxVolumeBytes: config.MaxVolumeBytes,
+            Priorities: config.Priorities);
+        var evaluator = new CorpusFitnessEvaluator(new CorpusFitnessSettings(
+            corpus,
+            baseOptions,
+            config.Alpha,
+            config.Beta,
+            config.TRefSeconds));
+
+        Console.WriteLine();
+        Write($"Оптимізація повного тракту Q: {(full ? "повна хромосома" : "3 гени")}, {corpus.Count} файлів", ConsoleColor.Cyan);
+
+        var experiment = new Experiment
+        {
+            Kind = ExperimentKind.Genetic,
+            StartedAtUtc = DateTime.UtcNow,
+            CommitHash = GitCommit(),
+            Seed = 2026,
+            Dataset = DatasetName(datasetPath),
+            ParametersJson = JsonSerializer.Serialize(new
+            {
+                chromosome = full ? "full" : "basic",
+                genes = full
+                    ? "window, min_match, abandon_threshold, search_depth, huffman_block_size, history_k, perceptron_architecture, strategy_flags"
+                    : "window, min_match, abandon_threshold",
+                population = full ? 6 : 8,
+                generations = full ? 4 : 5,
+                alpha = config.Alpha,
+                beta = config.Beta,
+                tRefSeconds = config.TRefSeconds,
+                maxVolumeBytes = config.MaxVolumeBytes,
+                fitness = "full ArchivePipeline Q: compression S and speed T, Q = alpha*S + beta*T",
+                d1Case = "D1 #17",
+            }),
+        };
+
+        if (full)
+        {
+            var space = new FullChromosomeSpace();
+            var budget = new GeneticSearchOptions(PopulationSize: 6, Generations: 4, EliteCount: 2, TournamentSize: 3, Seed: 2026);
+            SearchRun<FullChromosome> genetic = new GeneticAlgorithm<FullChromosome>(space, evaluator).Run(budget);
+            SearchRun<FullChromosome> random = new RandomSearch<FullChromosome>(space, evaluator).Run(budget, seed: 2027);
+            SearchRun<FullChromosome> local = new LocalSearch<FullChromosome>(space, evaluator).Run(
+                genetic.BestChromosome,
+                new LocalSearchOptions(MaxEvaluations: 40, Seed: 2028));
+            AddGeneticRows(experiment, genetic, full);
+            AddGeneticRows(experiment, random, full);
+            AddGeneticRows(experiment, local, full);
+            PrintOptimizationSummary(genetic, random, local, c);
+        }
+        else
+        {
+            var space = new BasicChromosomeSpace();
+            var budget = new GeneticSearchOptions(PopulationSize: 8, Generations: 5, EliteCount: 2, TournamentSize: 3, Seed: 2026);
+            SearchRun<BasicChromosome> genetic = new GeneticAlgorithm<BasicChromosome>(space, evaluator).Run(budget);
+            SearchRun<BasicChromosome> random = new RandomSearch<BasicChromosome>(space, evaluator).Run(budget, seed: 2027);
+            AddGeneticRows(experiment, genetic, full: false);
+            AddGeneticRows(experiment, random, full: false);
+            PrintOptimizationSummary(genetic, random, local: null, c);
+        }
+
+        IReadOnlyList<ParetoRow> pareto = ReportTables.ParetoFront(experiment);
+        Console.WriteLine();
+        Console.WriteLine($"Фронт Парето (max S і max T): {pareto.Count} хромосом");
+        foreach (ParetoRow row in pareto)
+        {
+            Console.WriteLine(string.Format(c, "  {0,-11} gen {1,2}, ind {2,2}: S={3:F4}, T={4:F4}, Q={5:F4}",
+                row.Algorithm, row.Generation, row.Individual, row.S, row.T, row.Fitness));
+        }
+
+        IMeasurementStore store = OpenMeasurementStore();
+        if (store.IsEnabled)
+        {
+            store.SaveExperiment(experiment);
+            Write($"[OK] {experiment.GeneticIndividuals.Count} оцінених хромосом записано в БД (експеримент №{experiment.Id}).", ConsoleColor.Green);
+        }
+        else
+        {
+            Write("[УВАГА] База даних вимкнена: журнал показано лише в консолі.", ConsoleColor.Yellow);
+        }
+    }
+
+    private static void AddGeneticRows<T>(Experiment experiment, SearchRun<T> run, bool full)
+    {
+        foreach (EvaluatedCandidate<T> row in run.Evaluations)
+        {
+            string genes = full
+                ? ChromosomeJson.Serialize((FullChromosome)(object)row.Chromosome!)
+                : ChromosomeJson.Serialize((BasicChromosome)(object)row.Chromosome!);
+            experiment.GeneticIndividuals.Add(new GeneticIndividual
+            {
+                Algorithm = row.Algorithm switch
+                {
+                    SearchMethod.Genetic => SearchAlgorithm.Genetic,
+                    SearchMethod.Random => SearchAlgorithm.Random,
+                    SearchMethod.LocalSearch => SearchAlgorithm.LocalSearch,
+                    _ => throw new ArgumentOutOfRangeException(),
+                },
+                Generation = row.Generation,
+                Individual = row.Individual,
+                GenesJson = genes,
+                Fitness = row.Result.Fitness,
+                S = row.Result.Compression,
+                T = row.Result.Speed,
+            });
+        }
+    }
+
+    private static void PrintOptimizationSummary<T>(
+        SearchRun<T> genetic,
+        SearchRun<T> random,
+        SearchRun<T>? local,
+        CultureInfo culture)
+    {
+        Console.WriteLine(string.Format(culture,
+            "  GA: evaluations {0}, initial best Q={1:F4}, final generation Q={2:F4}, best Q={3:F4}",
+            genetic.FitnessEvaluations, genetic.InitialGenerationBest, genetic.FinalGenerationBest, genetic.BestResult.Fitness));
+        Console.WriteLine(string.Format(culture,
+            "  Random: evaluations {0}, initial best Q={1:F4}, final generation Q={2:F4}, best Q={3:F4}",
+            random.FitnessEvaluations, random.InitialGenerationBest, random.FinalGenerationBest, random.BestResult.Fitness));
+        if (genetic.FitnessEvaluations == random.FitnessEvaluations)
+            Write("[OK] GA і випадковий пошук мають однакову кількість обчислень пристосованості.", ConsoleColor.Green);
+        else
+            Write("[ПОМИЛКА] Бюджети GA і випадкового пошуку різні.", ConsoleColor.Red);
+        if (genetic.FinalGenerationBest + 1e-12 >= genetic.InitialGenerationBest)
+            Write("[OK] Найкраще Q останнього покоління не гірше за нульове (елітність).", ConsoleColor.Green);
+        else
+            Write("[ПОПЕРЕДЖЕННЯ] Умова монотонності Q не виконана.", ConsoleColor.Yellow);
+        if (local is not null)
+            Console.WriteLine(string.Format(culture, "  Local search: evaluations {0}, best Q={1:F4}", local.FitnessEvaluations, local.BestResult.Fitness));
     }
 
     /// <summary>Журнал еволюції ГА (усі хромосоми й пристосованість) з БД у CSV, який зберігається в репозиторії.</summary>

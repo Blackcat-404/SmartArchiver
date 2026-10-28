@@ -9,14 +9,17 @@ internal static class GreedyParser
     public static List<Lz77Token> Parse(
         byte[] block,
         int maxChain = MatchFinder.DefaultMaxChain)
+        => Parse(block, new Lz77SearchOptions { SearchDepth = maxChain });
+
+    internal static List<Lz77Token> Parse(
+        byte[] block,
+        Lz77SearchOptions options)
     {
         ArgumentNullException.ThrowIfNull(block);
+        ArgumentNullException.ThrowIfNull(options);
+        options.Validate();
 
-        if (maxChain <= 0)
-            throw new ArgumentOutOfRangeException(nameof(maxChain),
-                "Глибина пошуку має бути додатною.");
-
-        var finder = new MatchFinder(block, maxChain);
+        var finder = new MatchFinder(block, options);
         var tokens = new List<Lz77Token>();
         int pos = 0;
 

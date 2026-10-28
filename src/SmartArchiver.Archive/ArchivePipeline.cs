@@ -1,3 +1,5 @@
+using SmartArchiver.Compression;
+
 namespace SmartArchiver.Archive;
 
 /// <summary>Параметри повного тракту. Аналізатор обов'язковий: без нього не відомо, що стискати.</summary>
@@ -10,7 +12,10 @@ public sealed record PackOptions(
     long MaxVolumeBytes = 0,
     PackingAlgorithm Algorithm = PackingAlgorithm.Dp,
     PackingPriorities? Priorities = null,
-    StrategyScope Scope = StrategyScope.File);
+    StrategyScope Scope = StrategyScope.File,
+    Lz77ParseMode ParseMode = Lz77ParseMode.Lazy,
+    BlockSplitMode SplitMode = BlockSplitMode.Fixed,
+    Lz77SearchOptions? Compression = null);
 
 /// <summary>Результат без винятку: значення або код помилки (E_MAGIC, E_LENGTH, E_HMAC, E_PAYLOAD, E_CODE, E_CRC, ...).</summary>
 public sealed record ArchiveResult<T>(T? Value, ErrorCode? Error = null, string Message = "")
@@ -28,7 +33,13 @@ public static class ArchivePipeline
     public static IReadOnlyList<PreparedFile> Prepare(IReadOnlyList<ArchiveInput> files, PackOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
-        return new ArchiveWriter(options.BlockSize, options.Analyzer, scope: options.Scope).Prepare(files);
+        return new ArchiveWriter(
+            options.BlockSize,
+            options.Analyzer,
+            options.ParseMode,
+            options.SplitMode,
+            options.Scope,
+            options.Compression).Prepare(files);
     }
 
     /// <summary>Пакування по томах (рюкзак), шифрування і HMAC. Блок, що не влазить у том, дає E_CAPACITY.</summary>

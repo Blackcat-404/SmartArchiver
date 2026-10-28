@@ -47,7 +47,10 @@ dotnet run --project src/SmartArchiver.Cli -- pack test.arc --volume-size 65536 
 dotnet run --project src/SmartArchiver.Cli -- unpack test.part1.arc out                        # сусідні томи підхоплюються самі
 dotnet run --project src/SmartArchiver.Cli -- pack-experiment Datasets 65536                   # ДП-рюкзак проти жадібного
 dotnet run --project src/SmartArchiver.Cli -- measure Datasets [team_config.json]              # Q на всьому корпусі, результат у БД
+dotnet run --project src/SmartArchiver.Cli -- genetic-experiment Datasets [team_config.json]  # GA проти random; додайте full для повної хромосоми
 ```
+
+Реалізація задач Учасника 3 — генетичний/випадковий/локальний пошук, повна функція пристосованості `Q` і фронт Парето — описана в [docs/optimization.md](docs/optimization.md).
 
 Чекпоінт 3: `pack` і `unpack` проходять повний тракт **аналіз → блоки → LZ77 → Гаффман → пакування → AES-256-CTR → HMAC-SHA256 → томи** (`ArchivePipeline`). Пароль береться зі змінної `SMARTARCHIVER_PASSWORD` або вводиться без показу. Пошкоджений архів дає код `E_MAGIC`, `E_LENGTH`, `E_HMAC`, `E_PAYLOAD`, `E_CODE` або `E_CRC` (`ArchivePipeline.TryUnpack`, без винятків). `unpack` атомарний: усе перевіряється в пам'яті, наявні файли не перезаписуються, часткового результату на диску немає. `measure` проганяє весь корпус через тракт і рахує `Q = α·S + β·T`; α, β, `t_ref` і місткість тому беруться з `team_config.json` (`alpha`, `beta`, `t_ref`, `max_volume_bytes`), а без нього це заглушки. Рішення 35–38 у `docs/decisions.md`.
 

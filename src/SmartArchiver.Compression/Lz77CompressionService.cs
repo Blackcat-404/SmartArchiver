@@ -31,24 +31,29 @@ public static class Lz77CompressionService
     /// Кодує один непорожній блок у форматі LZ77 + три таблиці Гаффмана.
     /// Не додає заголовок блока архіву.
     /// </summary>
-    public static byte[] EncodeBlock(byte[] data, Lz77ParseMode mode = Lz77ParseMode.Greedy)
+    public static byte[] EncodeBlock(
+        byte[] data,
+        Lz77ParseMode mode = Lz77ParseMode.Greedy,
+        Lz77SearchOptions? searchOptions = null)
     {
         ArgumentNullException.ThrowIfNull(data);
         if (data.Length == 0)
             throw new ArgumentException("Порожній блок не кодується.", nameof(data));
         if (!Enum.IsDefined(mode))
             throw new ArgumentOutOfRangeException(nameof(mode));
+        searchOptions ??= new Lz77SearchOptions();
+        searchOptions.Validate();
 
         // IterativeParser вже повертає готові стиснені байти;
         // не повторюємо Huffman-кодування зайвий раз.
         if (mode == Lz77ParseMode.Iterative)
-            return IterativeParser.Optimize(data).Encoded;
+            return IterativeParser.Optimize(data, maxIterations: 3, options: searchOptions).Encoded;
 
         IReadOnlyList<Lz77Token> tokens = mode switch
         {
-            Lz77ParseMode.Greedy => GreedyParser.Parse(data),
-            Lz77ParseMode.Lazy => LazyParser.Parse(data),
-            Lz77ParseMode.Dp => DpParser.Parse(data),
+            Lz77ParseMode.Greedy => GreedyParser.Parse(data, searchOptions),
+            Lz77ParseMode.Lazy => LazyParser.Parse(data, searchOptions),
+            Lz77ParseMode.Dp => DpParser.Parse(data, ParseCostModel.Fixed(), searchOptions),
             _ => throw new ArgumentOutOfRangeException(nameof(mode))
         };
         return Lz77BlockEncoder.Encode(tokens);
@@ -66,23 +71,34 @@ public static class Lz77CompressionService
         byte[] data,
         Lz77ParseMode mode = Lz77ParseMode.Greedy,
         int blockSize = 65_536,
-        bool allowStored = true)
+        bool allowStored = true,
+        Lz77SearchOptions? searchOptions = null)
     {
         ArgumentNullException.ThrowIfNull(data);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(blockSize);
         if (!Enum.IsDefined(mode))
             throw new ArgumentOutOfRangeException(nameof(mode));
+        searchOptions ??= new Lz77SearchOptions();
+        searchOptions.Validate();
 
         var result = new List<Lz77PreparedBlock>();
         for (int offset = 0; offset < data.Length; offset += Math.Min(blockSize, data.Length - offset))
         {
             int length = Math.Min(blockSize, data.Length - offset);
             byte[] raw = data.AsSpan(offset, length).ToArray();
-            byte[] coded = EncodeBlock(raw, mode);
-            bool stored = allowStored && coded.Length >= raw.Length;
+            byte[] coded = EncodeBlock(raw, mode, searchOptions);
+            bool stored = allowStored && searchOptions.AllowStoredBlocks && ShouldAbandon(coded.Length, raw.Length, searchOptions.AbandonThreshold);
             result.Add(new Lz77PreparedBlock(offset, length, stored ? raw : coded, stored));
         }
         return result;
+    }
+
+    private static bool ShouldAbandon(int codedLength, int rawLength, double threshold)
+    {
+        if (codedLength >= rawLength)
+            return true;
+        double saving = 1.0 - (double)codedLength / rawLength;
+        return saving < threshold;
     }
 
     /// <summary>
