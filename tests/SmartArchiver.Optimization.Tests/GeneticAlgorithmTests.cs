@@ -4,6 +4,9 @@ namespace SmartArchiver.Optimization.Tests;
 
 public sealed class GeneticAlgorithmTests
 {
+    private static readonly int[] WindowGrid = [256, 512, 1_024, 2_048, 4_096, 8_192, 16_384, 32_768];
+    private static readonly int[] ExpectedFront = [0, 1];
+
     [Fact]
     public void BasicChromosome_UsesUniformCrossoverAndValidMutation()
     {
@@ -18,7 +21,7 @@ public sealed class GeneticAlgorithmTests
 
         child1.Validate();
         child2.Validate();
-        Assert.Contains(child1.SearchWindow, new[] { 256, 512, 1_024, 2_048, 4_096, 8_192, 16_384, 32_768 });
+        Assert.Contains(child1.SearchWindow, WindowGrid);
     }
 
     [Fact]
@@ -72,7 +75,7 @@ public sealed class GeneticAlgorithmTests
 
         IReadOnlyList<EvaluatedCandidate<int>> front = ParetoFront.Compute(candidates);
 
-        Assert.Equal(new[] { 0, 1 }, front.Select(x => x.Chromosome));
+        Assert.Equal(ExpectedFront, front.Select(x => x.Chromosome));
     }
 
     private static EvaluatedCandidate<int> Candidate(int id, double compression, double speed) =>

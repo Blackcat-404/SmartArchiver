@@ -118,7 +118,7 @@ public sealed class GeneticAlgorithm<T>
     }
 
     private List<EvaluatedCandidate<T>> Evaluate(
-        IReadOnlyList<T> chromosomes,
+        List<T> chromosomes,
         SearchMethod method,
         int generation,
         List<EvaluatedCandidate<T>> journal,
@@ -142,7 +142,7 @@ public sealed class GeneticAlgorithm<T>
     }
 
     private static EvaluatedCandidate<T> Tournament(
-        IReadOnlyList<EvaluatedCandidate<T>> population,
+        List<EvaluatedCandidate<T>> population,
         Random random,
         int size)
     {
@@ -201,7 +201,7 @@ public sealed class GeneticAlgorithm<T>
         if (options.PopulationSize < 1 || options.Generations < 0 || options.EliteCount < 0 || options.EliteCount > options.PopulationSize)
             throw new ArgumentOutOfRangeException(nameof(options));
         if (options.TournamentSize < 1 || options.TournamentSize > options.PopulationSize)
-            throw new ArgumentOutOfRangeException(nameof(options.TournamentSize));
+            throw new ArgumentOutOfRangeException(nameof(options), options.TournamentSize, "TournamentSize має бути від 1 до розміру популяції.");
         BasicChromosomeSpace.ValidateRate(options.InitialMutationRate);
         BasicChromosomeSpace.ValidateRate(options.FinalMutationRate);
     }
@@ -272,7 +272,7 @@ public sealed class LocalSearch<T>
         ArgumentNullException.ThrowIfNull(start);
         ArgumentNullException.ThrowIfNull(options);
         if (options.MaxEvaluations < 1)
-            throw new ArgumentOutOfRangeException(nameof(options.MaxEvaluations));
+            throw new ArgumentOutOfRangeException(nameof(options), options.MaxEvaluations, "MaxEvaluations має бути не менше 1.");
         var random = new Random(options.Seed);
         var journal = new List<EvaluatedCandidate<T>>(options.MaxEvaluations);
         T current = start;

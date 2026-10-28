@@ -15,6 +15,8 @@ public enum PerceptronArchitecture
 /// advanced search can turn a stage on or off without changing the archive format.
 /// </summary>
 [Flags]
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Naming", "CA1711:Identifiers should not have incorrect suffix",
+    Justification = "A [Flags] enum of strategy switches; the gene is called strategy_flags in the GA journal.")]
 public enum StrategyFlags
 {
     None = 0,
@@ -71,7 +73,7 @@ public sealed record FullChromosome(
     public const int MinHistoryDepth = 1;
     public const int MaxHistoryDepth = 4;
 
-    public static FullChromosome Default { get; } = new(
+    public static new FullChromosome Default { get; } = new(
         SearchWindow: 32_768,
         MinMatchLength: 3,
         AbandonThreshold: 0.0,
