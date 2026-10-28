@@ -19,6 +19,7 @@ internal sealed class MatchFinder
     private readonly int _maxChain;
     private readonly int _window;
     private readonly int _minMatch;
+    private readonly bool _literalsOnly;
 
     public MatchFinder(byte[] data, int maxChain = DefaultMaxChain)
         : this(data, new Lz77SearchOptions { SearchDepth = maxChain })
@@ -36,6 +37,7 @@ internal sealed class MatchFinder
         _maxChain = options.SearchDepth;
         _window = options.SearchWindow;
         _minMatch = options.MinMatchLength;
+        _literalsOnly = options.LiteralsOnly;
         _prev = new int[data.Length];
 
         Array.Fill(_head, -1);
@@ -69,7 +71,7 @@ internal sealed class MatchFinder
         distance = 0;
         length = 0;
 
-        if (pos + _minMatch > _data.Length)
+        if (_literalsOnly || pos + _minMatch > _data.Length)
             return false;
 
         int maxLen = Math.Min(Lz77Limits.MaxMatch, _data.Length - pos);

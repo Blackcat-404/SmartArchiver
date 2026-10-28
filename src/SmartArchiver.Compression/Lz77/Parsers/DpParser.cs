@@ -89,7 +89,7 @@ internal static class DpParser
             int bestLength = 1;
             int longest = Math.Min(Lz77Limits.MaxMatch, n - pos);
 
-            if (longest >= minMatch)
+            if (longest >= minMatch && !options.LiteralsOnly)
             {
                 Array.Clear(maxLengthByGroup);
                 Array.Clear(distanceByGroup);

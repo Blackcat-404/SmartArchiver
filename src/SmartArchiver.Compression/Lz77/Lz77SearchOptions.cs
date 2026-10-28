@@ -28,6 +28,12 @@ public sealed record Lz77SearchOptions
     /// </summary>
     public double AbandonThreshold { get; init; }
 
+    /// <summary>
+    /// No matches at all: every byte becomes a literal, so only Huffman coding shrinks the data. Used to measure
+    /// what LZ77 adds to the pipeline; the output is an ordinary valid block.
+    /// </summary>
+    public bool LiteralsOnly { get; init; }
+
     /// <summary>Whether a block may be stored raw when compression is not worthwhile.</summary>
     public bool AllowStoredBlocks { get; init; } = true;
 
