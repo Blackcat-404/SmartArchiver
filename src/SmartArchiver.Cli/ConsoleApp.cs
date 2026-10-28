@@ -83,6 +83,12 @@ internal static class ConsoleApp
             case "prediction-q" when args.Length <= 3:
                 RunPredictionQ(args.Length > 1 ? args[1] : "Datasets", args.Length > 2 ? args[2] : null);
                 return 0;
+            case "block-impact" when args.Length <= 3:
+                RunBlockImpact(args.Length > 1 ? args[1] : "Datasets", args.Length > 2 ? args[2] : null);
+                return 0;
+            case "encryption-order" when args.Length <= 2:
+                RunEncryptionOrder(args.Length > 1 ? args[1] : "Datasets");
+                return 0;
             case "strategy-experiment" when args.Length <= 2:
                 RunStrategyExperiment(args.Length > 1 ? args[1] : "Datasets");
                 return 0;
@@ -119,6 +125,8 @@ internal static class ConsoleApp
                 Console.WriteLine("  smartarchiver train-predictor [датасет] [модель.json]   навчити передбачення наступного байта");
                 Console.WriteLine("  smartarchiver prediction-experiment [датасет]          вплив передбачення на ентропію і розмір");
                 Console.WriteLine("  smartarchiver prediction-q [датасет] [team_config.json]  Q з прогнозом байта і без, по групах");
+                Console.WriteLine("  smartarchiver block-impact [датасет] [team_config.json]  Q з вимкненим по черзі блоком тракту (таблиця звіту 2)");
+                Console.WriteLine("  smartarchiver encryption-order [датасет]   «стиснути → зашифрувати» проти зворотного порядку (таблиця звіту 4)");
                 Console.WriteLine("  smartarchiver strategy-experiment [датасет]            фіксована стратегія проти класифікатора");
                 Console.WriteLine("  smartarchiver experiment <тека>            порівняти Greedy та Lazy на Datasets");
                 Console.WriteLine("  smartarchiver pack-experiment [датасет] [місткість тому] [team_config.json]  ДП-рюкзак проти жадібного пакування томів");
@@ -1238,7 +1246,7 @@ internal static class ConsoleApp
                     SearchMethod.Genetic => SearchAlgorithm.Genetic,
                     SearchMethod.Random => SearchAlgorithm.Random,
                     SearchMethod.LocalSearch => SearchAlgorithm.LocalSearch,
-                    _ => throw new ArgumentOutOfRangeException(),
+                    _ => throw new InvalidOperationException($"Невідомий метод пошуку: {row.Algorithm}."),
                 },
                 Generation = row.Generation,
                 Individual = row.Individual,
@@ -1454,6 +1462,156 @@ internal static class ConsoleApp
     /// Два набори: файли датасету як є і ті самі файли з вбудованими стисненими даними (файл групи 5 у середині,
     /// як картинка в документі). Другий набір показує, що дає стратегія по блоках на змішаних файлах.
     /// </summary>
+    /// <summary>
+    /// Розмір тому для таблиці «вплив кожного блоку»: стиснений корпус займає кілька томів, тож пакуванню є що вибирати,
+    /// а нестиснений блок на 64 КіБ разом із записом блоку ще вміщується в том.
+    /// </summary>
+    private const long BlockImpactVolumeBytes = 131_072;
+
+    /// <summary>
+    /// Таблиця звіту «вплив кожного блоку»: весь корпус через тракт з вимкненим по черзі блоком
+    /// (аналіз, LZ77, стиснення, ДП-пакування, шифрування), Q кожного варіанта і зміна відносно повного тракту.
+    /// </summary>
+    private static void RunBlockImpact(string datasetPath, string? configPath)
+    {
+        CultureInfo c = CultureInfo.InvariantCulture;
+        TeamConfig config = configPath is null
+            ? new TeamConfig(BlockImpactVolumeBytes, PackingPriorities.Default)
+            : TeamConfig.Load(configPath);
+        (List<ArchiveInput> inputs, List<byte> groups) = LoadCorpus(datasetPath);
+        IReadOnlyList<GroupedFile> corpus = [.. inputs.Select((input, i) => new GroupedFile(groups[i], input))];
+        var options = new PackOptions(MeasurementPassword, new FileAnalyzer(), MaxVolumeBytes: config.MaxVolumeBytes, Priorities: config.Priorities);
+        const int repeats = 5;
+
+        Console.WriteLine();
+        Write($"Вплив кожного блоку тракту на Q: {corpus.Count} файлів, том {config.MaxVolumeBytes} байт", ConsoleColor.Cyan);
+        DateTime started = DateTime.UtcNow;
+        IReadOnlyList<BlockImpactMeasurement> results = BlockImpactComparison.Run(
+            corpus, options, config.Alpha, config.Beta, config.TRefSeconds, repeats);
+        double baseline = results.Single(r => r.DisabledStage == PipelineStage.None).Score.Q;
+
+        Console.WriteLine($"  {"Вимкнено",-12} {"Архів, Б",10} {"Томів",6} {"Час, с",8} {"S",7} {"T",7} {"Q",7} {"ΔQ",8} {"Відновлено",11}");
+        foreach (BlockImpactMeasurement r in results)
+        {
+            Console.WriteLine(string.Format(c, "  {0,-12} {1,10} {2,6} {3,8:F3} {4,7:F4} {5,7:F4} {6,7:F4} {7,8:+0.0000;-0.0000;0} {8,11}",
+                StageName(r.DisabledStage), r.ArchiveBytes, r.Volumes, r.Seconds, r.Score.S, r.Score.T, r.Score.Q,
+                r.Score.Q - baseline, r.AllRestored ? "так" : "НІ"));
+        }
+        Console.WriteLine(string.Format(c, "  α = {0}, β = {1}, t_ref = {2} с; час: медіана з {3} прогонів після розігріву",
+            config.Alpha, config.Beta, config.TRefSeconds, repeats));
+        if (configPath is null)
+            Write("  [УВАГА] α, β, t_ref і пріоритети стандартні (заглушка): справжні задає team_config.json.", ConsoleColor.Yellow);
+
+        var experiment = new Experiment
+        {
+            Kind = ExperimentKind.BlockImpact,
+            StartedAtUtc = started,
+            CommitHash = GitCommit(),
+            Dataset = DatasetName(datasetPath),
+            ParametersJson = JsonSerializer.Serialize(new
+            {
+                alpha = config.Alpha,
+                beta = config.Beta,
+                tRefSeconds = config.TRefSeconds,
+                maxVolumeBytes = config.MaxVolumeBytes,
+                config = configPath is null ? "defaults (placeholder)" : Path.GetFileName(configPath),
+                repeats,
+                notMeasured = "Huffman alone (the format requires Huffman tables), Prediction (not part of the pipeline)",
+            }),
+        };
+        foreach (BlockImpactMeasurement r in results)
+        {
+            experiment.BlockImpactResults.Add(new BlockImpactResult
+            {
+                DisabledBlock = Enum.Parse<PipelineBlock>(r.DisabledStage.ToString()),
+                OriginalBytes = r.OriginalBytes,
+                ArchiveBytes = r.ArchiveBytes,
+                ElapsedSeconds = r.Seconds,
+                AllRestored = r.AllRestored,
+                S = r.Score.S,
+                T = r.Score.T,
+                Q = r.Score.Q,
+            });
+        }
+        SaveExperimentIfEnabled(experiment);
+    }
+
+    private static string StageName(PipelineStage stage) => stage switch
+    {
+        PipelineStage.None => "нічого",
+        PipelineStage.Analysis => "аналіз",
+        PipelineStage.Lz77 => "LZ77",
+        PipelineStage.Compression => "стиснення",
+        PipelineStage.Packing => "ДП-пакування",
+        PipelineStage.Encryption => "шифрування",
+        _ => stage.ToString(),
+    };
+
+    /// <summary>Таблиця звіту «стиснути → зашифрувати» проти зворотного порядку, по файлах і разом по групах.</summary>
+    private static void RunEncryptionOrder(string datasetPath)
+    {
+        CultureInfo c = CultureInfo.InvariantCulture;
+        IReadOnlyList<GroupedFile> files = [.. LabeledDataset.ListFiles(datasetPath)
+            .Select(f => new GroupedFile(f.Label, new ArchiveInput(Path.GetFileName(f.FullPath), File.ReadAllBytes(f.FullPath))))];
+
+        Console.WriteLine();
+        Write($"«Стиснути → зашифрувати» проти зворотного порядку: {files.Count} файлів, LZ77 + Гаффман, AES-256-CTR", ConsoleColor.Cyan);
+        IReadOnlyList<EncryptionOrderMeasurement> results = EncryptionOrderComparison.Run(files);
+
+        Console.WriteLine($"  {"Група",5} {"Було, Б",9} {"Стиснути→зашифр., Б",20} {"Зашифр.→стиснути, Б",20} {"без збереження як є, Б",23} {"Коеф. 1",8} {"Коеф. 2",8}");
+        foreach (IGrouping<int, EncryptionOrderMeasurement> group in results.GroupBy(r => r.Group).OrderBy(g => g.Key))
+        {
+            long original = group.Sum(r => r.OriginalBytes), first = group.Sum(r => r.CompressThenEncryptBytes);
+            long second = group.Sum(r => r.EncryptThenCompressBytes), coded = group.Sum(r => r.EncryptThenCompressCodedBytes);
+            Console.WriteLine(string.Format(c, "  {0,5} {1,9} {2,20} {3,20} {4,23} {5,8:F2} {6,8:F2}",
+                group.Key, original, first, second, coded, (double)original / first, (double)original / second));
+        }
+        if (results.All(r => r.BothRestored))
+            Write("[OK] Обидва порядки відновлюють кожен файл побайтово.", ConsoleColor.Green);
+        else
+            Write("[ПОМИЛКА] Не всі файли відновлено.", ConsoleColor.Red);
+
+        var experiment = new Experiment
+        {
+            Kind = ExperimentKind.EncryptionOrder,
+            StartedAtUtc = DateTime.UtcNow,
+            CommitHash = GitCommit(),
+            Dataset = DatasetName(datasetPath),
+            ParametersJson = JsonSerializer.Serialize(new
+            {
+                blockSize = FormatConstants.DefaultBlockSize,
+                parseMode = "Lazy",
+                cipher = "AES-256-CTR, random key and nonce",
+                size = "block data only; blocks without gain stored as they are",
+            }),
+        };
+        foreach (EncryptionOrderMeasurement r in results)
+        {
+            experiment.EncryptionOrderResults.Add(new EncryptionOrderResult
+            {
+                Group = (byte)r.Group,
+                OriginalBytes = r.OriginalBytes,
+                CompressThenEncryptBytes = r.CompressThenEncryptBytes,
+                EncryptThenCompressBytes = r.EncryptThenCompressBytes,
+            });
+        }
+        SaveExperimentIfEnabled(experiment);
+    }
+
+    private static void SaveExperimentIfEnabled(Experiment experiment)
+    {
+        IMeasurementStore store = OpenMeasurementStore();
+        if (store.IsEnabled)
+        {
+            store.SaveExperiment(experiment);
+            Write($"[OK] Результати збережено в базі даних (експеримент №{experiment.Id}).", ConsoleColor.Green);
+        }
+        else
+        {
+            Write("[УВАГА] База даних вимкнена: результати виведено лише в консоль.", ConsoleColor.Yellow);
+        }
+    }
+
     private static void RunStrategyExperiment(string datasetPath)
     {
         IReadOnlyList<GroupedFile> files = [.. LabeledDataset.ListFiles(datasetPath)

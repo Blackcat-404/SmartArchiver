@@ -1352,3 +1352,39 @@ public void BlockScope_BlockTheAnalyzerRejects_IsNotCompressedEvenIfItWouldShrin
 
 **Вимір.** Змішані файли можна зібрати з наявних: вставити вже стиснений файл у середину текстового, як картинку в документ. Порівнювати варто з обома альтернативами: класифікатором на весь файл і стратегією «завжди стискати». Якщо архів і так зберігає без змін блоки без виграшу, «не стискати» економить лише час, а помилка класифікатора на змішаному блоці коштує розміру. Тож результат може бути не на користь нової стратегії, і це треба показати.
 
+## 16. Таблиці звіту «вплив кожного блоку» і «стиснути → зашифрувати»
+
+**Промпт:**
+
+> Для звіту бракує двох обов'язкових таблиць: Q з вимкненим по черзі блоком тракту і порівняння порядку «стиснути → зашифрувати» зі зворотним. Як вимкнути кожен блок, не змінюючи формат архіву, і як чесно порівняти обидва порядки нашим стисненням? Дай приклад коду.
+
+**Відповідь:**
+
+**Вимкнення блоків.** Кожен блок замінюється найпростішою альтернативою, яку формат уже допускає. Аналіз замінюється фіксованою стратегією «завжди стискати», ДП-пакування жадібним, шифрування вимикається записом і читанням томів без AES і HMAC, а стиснення цілком вимикається збереженням усього як є. LZ77 окремо вимикається забороною збігів: кожен байт стає літералом, і дані стискає лише Гаффман. Такий потік є звичайним валідним блоком, тож формат не змінюється. Гаффмана окремо вимкнути не можна, бо формат вимагає його таблиць у кожному стиснутому блоці, і це треба прямо сказати в звіті.
+
+```csharp
+(ArchiveInput[] inputs, PackOptions variant) = stage switch
+{
+    PipelineStage.None => (asIs, options),
+    PipelineStage.Analysis => (withGroup, options with { Analyzer = new FixedStrategy(CompressionStrategy.Lz77Huffman) }),
+    PipelineStage.Lz77 => (asIs, options with { Compression = (options.Compression ?? new Lz77SearchOptions()) with { LiteralsOnly = true } }),
+    PipelineStage.Compression => (withGroup, options with { Analyzer = new FixedStrategy(CompressionStrategy.NoCompression) }),
+    PipelineStage.Packing => (asIs, options with { Algorithm = PackingAlgorithm.Greedy }),
+    _ => (asIs, options),
+};
+```
+
+Час Q на корпусі вимірюється частками секунди, тож один прогін шумний. Потрібні розігрів і медіана з кількох прогонів, а також повторний запуск, щоб переконатися, що зміна Q більша за розкид.
+
+**Порядок стиснення й шифрування.** Обидва порядки треба виконати тим самим кодером і тим самим ключем, а потім відновити й звірити побайтово. Якщо кодер зберігає блоки без виграшу як є, шифрування першим дасть рівно вихідний розмір. Тому варто окремо показати, що робить сам кодер із шифротекстом без цього запасного варіанта: він його збільшує.
+
+```csharp
+IReadOnlyList<Lz77PreparedBlock> compressed = Lz77CompressionService.PrepareFixedBlocks(data, Lz77ParseMode.Lazy, blockSize);
+byte[] sealedData = ArchiveSecurity.TransformCtr(Concat(compressed), key, nonce);
+
+byte[] ciphertext = ArchiveSecurity.TransformCtr(data, key, nonce);
+IReadOnlyList<Lz77PreparedBlock> encryptedFirst = Lz77CompressionService.PrepareFixedBlocks(ciphertext, Lz77ParseMode.Lazy, blockSize);
+IReadOnlyList<Lz77PreparedBlock> coderOnly =
+    Lz77CompressionService.PrepareFixedBlocks(ciphertext, Lz77ParseMode.Lazy, blockSize, allowStored: false);
+```
+

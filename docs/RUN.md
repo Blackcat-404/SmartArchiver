@@ -34,6 +34,8 @@ dotnet run --project src/SmartArchiver.Cli -- train-predictor Datasets predictor
 dotnet run --project src/SmartArchiver.Cli -- prediction-experiment Datasets
 dotnet run --project src/SmartArchiver.Cli -- prediction-q Datasets [team_config.json]
 dotnet run --project src/SmartArchiver.Cli -- strategy-experiment Datasets
+dotnet run --project src/SmartArchiver.Cli -- block-impact Datasets [team_config.json]
+dotnet run --project src/SmartArchiver.Cli -- encryption-order Datasets
 dotnet run --project src/SmartArchiver.Cli -- pack-experiment Datasets 65536 [team_config.json]
 dotnet run --project src/SmartArchiver.Cli -- measure Datasets [team_config.json]
 dotnet run --project src/SmartArchiver.Cli -- genetic-experiment Datasets [team_config.json] [full]
