@@ -12,8 +12,11 @@ public enum PipelineBlock
     /// <summary>LZ77 parsing: only Huffman over the raw bytes.</summary>
     Lz77,
 
-    /// <summary>Huffman coding: LZ77 tokens stored without entropy coding.</summary>
+    /// <summary>Huffman coding alone. The format requires Huffman tables in every compressed block, so the experiment does not switch it off.</summary>
     Huffman,
+
+    /// <summary>LZ77 and Huffman together: every file stored as it is.</summary>
+    Compression,
 
     /// <summary>DP knapsack packing of volumes: greedy packing instead.</summary>
     Packing,

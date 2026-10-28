@@ -126,7 +126,7 @@ namespace SmartArchiver.Data.Migrations
 
                     b.ToTable("BlockImpactResults", t =>
                         {
-                            t.HasCheckConstraint("CK_BlockImpactResults_Block", "[DisabledBlock] IN ('None', 'Analysis', 'Lz77', 'Huffman', 'Packing', 'Encryption', 'Prediction')");
+                            t.HasCheckConstraint("CK_BlockImpactResults_Block", "[DisabledBlock] IN ('None', 'Analysis', 'Lz77', 'Huffman', 'Compression', 'Packing', 'Encryption', 'Prediction')");
 
                             t.HasCheckConstraint("CK_BlockImpactResults_Q", "[S] BETWEEN 0 AND 1 AND [T] BETWEEN 0 AND 1 AND [Q] >= 0");
 
