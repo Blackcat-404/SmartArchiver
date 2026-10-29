@@ -6,8 +6,18 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Folder Include="Models\" />
     <AvaloniaResource Include="Assets\**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SmartArchiver.Analysis\SmartArchiver.Analysis.csproj" />
+    <ProjectReference Include="..\SmartArchiver.Archive\SmartArchiver.Archive.csproj" />
+    <ProjectReference Include="..\SmartArchiver.Data\SmartArchiver.Data.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The same connection string as the console app: appsettings.Local.json stays in one place and out of git. -->
+    <None Include="..\SmartArchiver.Cli\appsettings*.json" Link="%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>
