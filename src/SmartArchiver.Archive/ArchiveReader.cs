@@ -17,9 +17,6 @@ public static class ArchiveReader
         public FileTableEntry Entry { get; } = entry;
         public List<(uint Sequence, byte[] Data)> Chunks { get; } = [];
         public long Accumulated { get; set; }
-
-        /// <summary>Позиція першого блока файлу в секції даних цього тому, або -1, якщо блоків тут немає.</summary>
-        public long FirstBlockOffset { get; set; } = -1;
     }
 
     private sealed record ParsedVolume(VolumeHeader Header, List<FileState> Files);
@@ -55,8 +52,8 @@ public static class ArchiveReader
         {
             if (header.VolumeCount != count)
                 throw new ArchiveException(ErrorCode.E_VOLUMES, "Томи належать різним архівам: різна кількість томів у заголовках.");
-            if (!numbers.Add(header.VolumeNumber))
-                throw new ArchiveException(ErrorCode.E_VOLUMES, $"Том №{header.VolumeNumber} передано двічі.");
+            if (!numbers.Add(header.VolumeIndex))
+                throw new ArchiveException(ErrorCode.E_VOLUMES, $"Том з volume_index {header.VolumeIndex} передано двічі.");
         }
         if (volumes.Count != count)
             throw new ArchiveException(ErrorCode.E_VOLUMES, $"Архів має {count} том(ів), передано {volumes.Count}.");
@@ -66,7 +63,7 @@ public static class ArchiveReader
         {
             parsed.Add(ParseVolume(volume, requireSingleVolume: false));
         }
-        parsed.Sort((a, b) => a.Header.VolumeNumber.CompareTo(b.Header.VolumeNumber));
+        parsed.Sort((a, b) => a.Header.VolumeIndex.CompareTo(b.Header.VolumeIndex));
         return Assemble(parsed);
     }
 
@@ -83,14 +80,18 @@ public static class ArchiveReader
 
         var reader = new ByteReader(archive, FormatConstants.HeaderSize, (int)header.CiphertextLength);
 
-        // 2. Таблиця файлів.
-        uint count = reader.ReadU32();
-        if (count > FormatConstants.MaxFileCount || (long)count * FormatConstants.MinFileEntrySize > reader.Remaining)
+        // 2. Поля перед таблицею файлів: flags і reserved мають бути нульові (PREDICTION — розширення, яке тут не читається).
+        int count = reader.ReadU16();
+        if (reader.ReadU8() != 0)
+            throw new ArchiveException(ErrorCode.E_PAYLOAD, "Невідомі біти flags: цей розархіватор читає лише базовий формат.");
+        if (reader.ReadU8() != 0)
+            throw new ArchiveException(ErrorCode.E_PAYLOAD, "Ненульове поле reserved.");
+        if ((long)count * FormatConstants.MinFileEntrySize > reader.Remaining)
             throw new ArchiveException(ErrorCode.E_PAYLOAD, "Кількість файлів не відповідає розміру payload.");
 
         var names = new HashSet<string>(StringComparer.Ordinal);
-        var states = new List<FileState>((int)count);
-        for (uint i = 0; i < count; i++)
+        var states = new List<FileState>(count);
+        for (int i = 0; i < count; i++)
         {
             FileTableEntry entry = FileTableEntry.ReadFrom(reader);
             if (!names.Add(entry.Name))
@@ -98,50 +99,49 @@ public static class ArchiveReader
             states.Add(new FileState(entry));
         }
 
-        // 3. Секція даних: блоки до кінця payload.
-        long dataStart = reader.Position;
-        while (reader.Remaining > 0)
+        // 3. Таблиця блоків: спершу всі записи, потім дані блоків підряд у тому самому порядку.
+        int blockCount = reader.ReadU16();
+        if ((long)blockCount * FormatConstants.BlockHeaderSize > reader.Remaining)
+            throw new ArchiveException(ErrorCode.E_PAYLOAD, "Кількість блоків не відповідає розміру payload.");
+        var records = new List<(FileState File, uint Sequence, uint RawLength, uint CodedLength, bool Stored)>(blockCount);
+        long dataLength = 0;
+        for (int i = 0; i < blockCount; i++)
         {
-            long blockOffset = reader.Position - dataStart;
             ushort fileIndex = reader.ReadU16();
-            uint blockIndex = reader.ReadU32();
+            uint sequence = reader.ReadU32();
             uint rawLength = reader.ReadU32();
             uint codedLength = reader.ReadU32();
-            byte strategyByte = reader.ReadU8();
+            byte flags = reader.ReadU8();
 
             if (fileIndex >= states.Count)
                 throw new ArchiveException(ErrorCode.E_PAYLOAD, "Блок посилається на неіснуючий файл.");
-            if (!Enum.IsDefined((CompressionStrategy)strategyByte))
-                throw new ArchiveException(ErrorCode.E_CODE, $"Невідома стратегія блока: {strategyByte}.");
-            var strategy = (CompressionStrategy)strategyByte;
-
+            if ((flags & ~FormatConstants.NoCompressionFlag) != 0)
+                throw new ArchiveException(ErrorCode.E_PAYLOAD, $"Невідомі біти block_flags: 0x{flags:X2}.");
+            bool stored = (flags & FormatConstants.NoCompressionFlag) != 0;
             FileState state = states[fileIndex];
-            if (state.Entry.Strategy == CompressionStrategy.NoCompression && strategy != CompressionStrategy.NoCompression)
+            if (state.Entry.Strategy == CompressionStrategy.NoCompression && !stored)
                 throw new ArchiveException(ErrorCode.E_PAYLOAD, "Файл позначено як нестиснений, а блок стиснуто.");
             if (rawLength == 0 || rawLength > FormatConstants.MaxBlockRawLength)
                 throw new ArchiveException(ErrorCode.E_PAYLOAD, "Некоректний raw_len блока.");
-            if (strategy == CompressionStrategy.NoCompression && codedLength != rawLength)
-                throw new ArchiveException(ErrorCode.E_PAYLOAD, "Некоректні розміри блока.");
-            if (codedLength > reader.Remaining)
-                throw new ArchiveException(ErrorCode.E_PAYLOAD, "Блок виходить за межі payload.");
+            if (stored && codedLength != rawLength)
+                throw new ArchiveException(ErrorCode.E_PAYLOAD, "Блок NO_COMPRESSION має coded_len, відмінний від raw_len.");
             if ((ulong)(state.Accumulated + rawLength) > state.Entry.Size)
                 throw new ArchiveException(ErrorCode.E_PAYLOAD, "Блоки файлу більші за заявлений розмір.");
-
-            ReadOnlySpan<byte> coded = reader.ReadBytes((int)codedLength);
-            byte[] raw = strategy == CompressionStrategy.NoCompression ? coded.ToArray() : Decode(coded, (int)rawLength);
-
-            if (state.FirstBlockOffset < 0)
-                state.FirstBlockOffset = blockOffset;
-            state.Chunks.Add((blockIndex, raw));
             state.Accumulated += rawLength;
+            dataLength += codedLength;
+            records.Add((state, sequence, rawLength, codedLength, stored));
         }
 
-        // 4. Зміщення в таблиці вказує на перший блок файлу в цьому томі, або 0, якщо блоків тут немає.
-        foreach (FileState state in states)
+        // Довжини секцій мають точно збігатися: зайві байти після даних блоків неприпустимі.
+        if (dataLength != reader.Remaining)
+            throw new ArchiveException(ErrorCode.E_PAYLOAD,
+                $"Дані блоків займають {dataLength} байт, а після таблиці блоків лишилося {reader.Remaining}.");
+
+        // 4. Дані блоків.
+        foreach ((FileState file, uint sequence, uint rawLength, uint codedLength, bool stored) in records)
         {
-            ulong expectedOffset = state.FirstBlockOffset < 0 ? 0UL : (ulong)state.FirstBlockOffset;
-            if (state.Entry.Offset != expectedOffset)
-                throw new ArchiveException(ErrorCode.E_PAYLOAD, "Зміщення в таблиці не вказує на перший блок файлу в цьому томі.");
+            ReadOnlySpan<byte> coded = reader.ReadBytes((int)codedLength);
+            file.Chunks.Add((sequence, stored ? coded.ToArray() : Decode(coded, (int)rawLength)));
         }
         return new ParsedVolume(header, states);
     }

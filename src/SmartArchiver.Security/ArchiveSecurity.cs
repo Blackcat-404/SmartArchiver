@@ -32,7 +32,10 @@ public static class ArchiveSecurity
         finally { CryptographicOperations.ZeroMemory(derived); }
     }
 
-    /// <summary>AES-CTR — однакова операція для шифрування та розшифрування.</summary>
+    /// <summary>
+    /// AES-CTR — однакова операція для шифрування та розшифрування.
+    /// Лічильний блок i: nonce (12 байтів) || uint32_BE(i), i від 1 (FORMAT_SPEC_P2, 4.2).
+    /// </summary>
     public static byte[] TransformCtr(ReadOnlySpan<byte> input, ReadOnlySpan<byte> key,
         ReadOnlySpan<byte> nonce)
     {
@@ -40,7 +43,7 @@ public static class ArchiveSecurity
         if (nonce.Length != NonceSize)
             throw new ArgumentException("Nonce має бути 12 байт.", nameof(nonce));
         long blocks = ((long)input.Length + 15) / 16;
-        if (blocks > (long)uint.MaxValue + 1) throw new ArgumentException("CTR лічильник переповниться.", nameof(input));
+        if (blocks > uint.MaxValue) throw new ArgumentException("CTR лічильник переповниться.", nameof(input));
 
         byte[] result = new byte[input.Length];
         Span<byte> counter = stackalloc byte[16];
@@ -55,7 +58,7 @@ public static class ArchiveSecurity
             aes.Padding = PaddingMode.None;
             for (long block = 0; block < blocks; block++)
             {
-                BinaryPrimitives.WriteUInt32BigEndian(counter[12..], (uint)block);
+                BinaryPrimitives.WriteUInt32BigEndian(counter[12..], (uint)(block + 1));
                 aes.EncryptEcb(counter, streamBlock, PaddingMode.None);
                 int offset = checked((int)(block * 16));
                 int take = Math.Min(16, input.Length - offset);

@@ -3,6 +3,8 @@ namespace SmartArchiver.Core;
 /// <summary>Коди помилок з методички (розділ 5 і набір bad_*.arc). Імена збігаються з expected_failures.json.</summary>
 public enum ErrorCode
 {
+    /// <summary>Том коротший за 73 байти (заголовок 41 + HMAC 32): перевіряється до всього іншого.</summary>
+    E_SHORT,
     /// <summary>Невірні magic або версія.</summary>
     E_MAGIC,
     /// <summary>Архів обрізаний або має зайві байти, довжини не сходяться.</summary>

@@ -45,10 +45,10 @@ public sealed class Participant3Checkpoint3Tests
         var padded = ProtectedArchive.ProtectVolumes([plain], "password", padTo: 1024);
         Assert.True(VolumeHeader.Parse(padded[0]).CiphertextLength % 1024u == 0u);
         Assert.True(PaddingCost.Measure(normal, padded).ExtraBits > 0);
-        Assert.Equal(127, Assert.Single(ProtectedArchive.ReadProtectedVolumes(padded, "password")).Data.Length);
+        Assert.Equal(127, Assert.Single(ProtectedArchive.ReadProtectedVolumes(padded, "password", padded: true)).Data.Length);
         byte[] corrupt = (byte[])padded[0].Clone();
         corrupt[FormatConstants.HeaderSize + 2] ^= 1;
         Assert.Equal(ErrorCode.E_HMAC,
-            Assert.Throws<ArchiveException>(() => ProtectedArchive.ReadProtectedVolumes([corrupt], "password")).Code);
+            Assert.Throws<ArchiveException>(() => ProtectedArchive.ReadProtectedVolumes([corrupt], "password", padded: true)).Code);
     }
 }

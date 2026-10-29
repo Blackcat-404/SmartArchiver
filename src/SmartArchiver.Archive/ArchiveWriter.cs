@@ -40,9 +40,9 @@ public sealed record VolumeOptions(
 /// Запис архіву. Без аналізатора файли зберігаються як є. З аналізатором кожен файл спочатку аналізується
 /// (тип і стратегія), потім або зберігається як є (шум, вже стиснене), або кодується LZ77 + Гаффман блоками,
 /// причому блок без виграшу все одно зберігається як є.
-/// Том = заголовок(41) | payload. Payload = file_count(u32) | таблиця файлів | секція даних.
-/// Секція даних = послідовність блоків: заголовок блока (15 байт) + дані.
-/// Заголовок блока: file_index(u16) | block_index(u32) | raw_len(u32) | coded_len(u32) | стратегія(u8).
+/// Том = заголовок(41) | payload (FORMAT_SPEC_P2, розділ 2): file_count(u16) | flags(u8) = 0 | reserved(u8) = 0 |
+/// таблиця файлів | block_count(u16) | таблиця блоків (15 байт на блок) | дані блоків підряд.
+/// Запис блока: file_index(u16) | block_seq(u32) | raw_len(u32) | coded_len(u32) | block_flags(u8), біт 0 = NO_COMPRESSION.
 /// </summary>
 public sealed class ArchiveWriter
 {
@@ -102,7 +102,7 @@ public sealed class ArchiveWriter
     {
         ArgumentNullException.ThrowIfNull(files);
         if (files.Count > FormatConstants.MaxFileCount)
-            throw new ArchiveException(ErrorCode.E_PAYLOAD, "Забагато файлів в одному архіві (максимум 65536).");
+            throw new ArchiveException(ErrorCode.E_PAYLOAD, $"Забагато файлів в одному архіві (максимум {FormatConstants.MaxFileCount}).");
 
         var names = new HashSet<string>(StringComparer.Ordinal);
         var result = new List<PreparedFile>(files.Count);
@@ -135,7 +135,7 @@ public sealed class ArchiveWriter
                 blocks.Add((file.Index, block));
             }
         }
-        return WriteVolume(1, 1, prepared, [.. prepared.Select(f => f.Index)], blocks);
+        return WriteVolume(0, 1, prepared, [.. prepared.Select(f => f.Index)], blocks);
     }
 
     /// <summary>
@@ -168,7 +168,7 @@ public sealed class ArchiveWriter
             }
 
             byte[] bytes = WriteVolume(
-                checked((ushort)(volume.VolumeIndex + 1)),
+                checked((ushort)volume.VolumeIndex),
                 (ushort)plan.Volumes.Count,
                 prepared,
                 volume.FileIndexes,
@@ -204,6 +204,10 @@ public sealed class ArchiveWriter
                 : StoreBlocks(data);
         if (Scope == StrategyScope.Block)
             strategy = blocks.TrueForAll(b => b.IsStored) ? CompressionStrategy.NoCompression : CompressionStrategy.Lz77Huffman;
+
+        // file_type має бути 0…6: файл, тип якого ніхто не визначив (запис без аналізатора), позначається як штучні дані.
+        if (kind == FileKind.Unknown)
+            kind = FileKind.Artificial;
 
         // Файл, у якому жоден блок не вдалося стиснути, чесно позначається як нестиснений.
         if (strategy == CompressionStrategy.Lz77Huffman && blocks.TrueForAll(b => b.IsStored))
@@ -274,18 +278,19 @@ public sealed class ArchiveWriter
 
     /// <summary>
     /// Записує один том. Таблиця файлів містить файли з <paramref name="tableFiles"/> у цьому порядку;
-    /// file_index у заголовках блоків локальний для тому. Offset у таблиці це позиція першого блока файлу
-    /// в секції даних цього тому, або 0, якщо в цьому томі блоків файлу немає.
+    /// file_index у таблиці блоків локальний для тому. Блоки йдуть у тому порядку, у якому їх передано.
     /// </summary>
     private static byte[] WriteVolume(
-        ushort volumeNumber,
+        ushort volumeIndex,
         ushort volumeCount,
         IReadOnlyList<PreparedFile> prepared,
         IReadOnlyList<int> tableFiles,
         List<(int FileIndex, PreparedBlock Block)> blocks)
     {
         if (tableFiles.Count > FormatConstants.MaxFileCount)
-            throw new ArchiveException(ErrorCode.E_PAYLOAD, "Забагато файлів в одному томі (максимум 65536).");
+            throw new ArchiveException(ErrorCode.E_PAYLOAD, $"Забагато файлів в одному томі (максимум {FormatConstants.MaxFileCount}).");
+        if (blocks.Count > FormatConstants.MaxBlocksPerVolume)
+            throw new ArchiveException(ErrorCode.E_PAYLOAD, $"Забагато блоків в одному томі (максимум {FormatConstants.MaxBlocksPerVolume}).");
 
         var localIndex = new Dictionary<int, int>(tableFiles.Count);
         for (int i = 0; i < tableFiles.Count; i++)
@@ -293,36 +298,36 @@ public sealed class ArchiveWriter
             localIndex[tableFiles[i]] = i;
         }
 
-        var firstOffset = new ulong?[tableFiles.Count];
-        using var data = new MemoryStream();
+        using var payload = new MemoryStream();
+        BinaryIo.WriteU16(payload, (ushort)tableFiles.Count);
+        payload.WriteByte(0);   // flags: PREDICTION не використовується
+        payload.WriteByte(0);   // reserved
+        foreach (int file in tableFiles)
+        {
+            PreparedFile entry = prepared[file];
+            new FileTableEntry(entry.Name, entry.Size, entry.Crc32, entry.Kind, entry.Strategy).WriteTo(payload);
+        }
+
+        BinaryIo.WriteU16(payload, (ushort)blocks.Count);
         foreach ((int fileIndex, PreparedBlock block) in blocks)
         {
-            int local = localIndex[fileIndex];
-            firstOffset[local] ??= (ulong)data.Position;
-
-            BinaryIo.WriteU16(data, (ushort)local);
-            BinaryIo.WriteU32(data, (uint)block.Sequence);
-            BinaryIo.WriteU32(data, (uint)block.RawLength);
-            BinaryIo.WriteU32(data, (uint)block.CodedLength);
-            data.WriteByte((byte)block.Strategy);
-            data.Write(block.CodedBytes, 0, block.CodedBytes.Length);
+            BinaryIo.WriteU16(payload, (ushort)localIndex[fileIndex]);
+            BinaryIo.WriteU32(payload, (uint)block.Sequence);
+            BinaryIo.WriteU32(payload, (uint)block.RawLength);
+            BinaryIo.WriteU32(payload, (uint)block.CodedLength);
+            payload.WriteByte(block.IsStored ? FormatConstants.NoCompressionFlag : (byte)0);
         }
-
-        using var payload = new MemoryStream();
-        BinaryIo.WriteU32(payload, (uint)tableFiles.Count);
-        for (int i = 0; i < tableFiles.Count; i++)
+        foreach ((int _, PreparedBlock block) in blocks)
         {
-            PreparedFile file = prepared[tableFiles[i]];
-            new FileTableEntry(file.Name, file.Size, file.Crc32, file.Kind, file.Strategy, firstOffset[i] ?? 0UL).WriteTo(payload);
+            payload.Write(block.CodedBytes, 0, block.CodedBytes.Length);
         }
-        data.WriteTo(payload);
 
         if (payload.Length > uint.MaxValue)
             throw new ArchiveException(ErrorCode.E_LENGTH, "Payload завеликий для одного тому.");
 
         var header = new VolumeHeader
         {
-            VolumeNumber = volumeNumber,
+            VolumeIndex = volumeIndex,
             VolumeCount = volumeCount,
             CiphertextLength = (uint)payload.Length,
         };

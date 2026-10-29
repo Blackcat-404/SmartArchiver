@@ -3,32 +3,33 @@ using System.Text;
 namespace SmartArchiver.Archive;
 
 /// <summary>
-/// Запис таблиці файлів:
-/// name_len(u16) | ім'я UTF-8 | size(u64) | crc32(u32) | тип(u8) | стратегія(u8) | зміщення(u64).
-/// Зміщення це позиція заголовка першого блока файлу, відлічена від початку секції даних тому.
-/// Для порожнього файлу блоків немає, і зміщення не перевіряється (пишемо 0).
+/// Запис таблиці файлів (FORMAT_SPEC_P2, 2.2):
+/// name_len(u16) | ім'я UTF-8 | orig_size(u32) | crc32(u32) | file_type(u8) | strategy(u8).
+/// orig_size і crc32 стосуються цілого файлу, навіть якщо його блоки лежать у різних томах.
 /// </summary>
 public sealed record FileTableEntry(
     string Name,
     ulong Size,
     uint Crc32,
     FileKind Kind,
-    CompressionStrategy Strategy,
-    ulong Offset)
+    CompressionStrategy Strategy)
 {
     internal void WriteTo(Stream s)
     {
+        if (Size > FormatConstants.MaxFileSize)
+            throw new ArchiveException(ErrorCode.E_PAYLOAD, "Файл більший за 4 ГіБ: orig_size має лише 4 байти.");
+        if ((byte)Kind > FormatConstants.MaxFileType)
+            throw new ArchiveException(ErrorCode.E_PAYLOAD, $"file_type має бути від 0 до 6, а не {(byte)Kind}.");
         byte[] nameBytes = SafeNames.StrictUtf8.GetBytes(Name);
         BinaryIo.WriteU16(s, (ushort)nameBytes.Length);
         s.Write(nameBytes, 0, nameBytes.Length);
-        BinaryIo.WriteU64(s, Size);
+        BinaryIo.WriteU32(s, (uint)Size);
         BinaryIo.WriteU32(s, Crc32);
         s.WriteByte((byte)Kind);
         s.WriteByte((byte)Strategy);
-        BinaryIo.WriteU64(s, Offset);
     }
 
-    /// <summary>Читає запис і перевіряє: ім'я безпечне, тип і стратегія відомі.</summary>
+    /// <summary>Читає запис і перевіряє: ім'я безпечне, file_type від 0 до 6, стратегія відома.</summary>
     internal static FileTableEntry ReadFrom(ByteReader r)
     {
         int nameLength = r.ReadU16();
@@ -46,17 +47,16 @@ public sealed record FileTableEntry(
         }
         SafeNames.EnsureSafe(name);
 
-        ulong size = r.ReadU64();
+        uint size = r.ReadU32();
         uint crc = r.ReadU32();
         byte kind = r.ReadU8();
         byte strategy = r.ReadU8();
-        ulong offset = r.ReadU64();
 
-        if (!Enum.IsDefined((FileKind)kind))
+        if (kind > FormatConstants.MaxFileType)
             throw new ArchiveException(ErrorCode.E_PAYLOAD, $"Невідомий тип файлу: {kind}.");
         if (!Enum.IsDefined((CompressionStrategy)strategy))
             throw new ArchiveException(ErrorCode.E_CODE, $"Невідома стратегія: {strategy}.");
 
-        return new FileTableEntry(name, size, crc, (FileKind)kind, (CompressionStrategy)strategy, offset);
+        return new FileTableEntry(name, size, crc, (FileKind)kind, (CompressionStrategy)strategy);
     }
 }

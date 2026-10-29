@@ -183,9 +183,9 @@ public class CompressedArchiveTests
     [Fact]
     public void Reader_FileMarkedUncompressed_ButBlockCompressed_E_PAYLOAD()
     {
-        // Розкладка для імені "a.txt": стратегія файлу на зсуві 65.
+        // Розкладка для імені "a.txt": стратегія файлу на зсуві 61.
         byte[] archive = SmallCompressedArchive();
-        archive[65] = (byte)CompressionStrategy.NoCompression;
+        archive[61] = (byte)CompressionStrategy.NoCompression;
 
         TestData.AssertCode(ErrorCode.E_PAYLOAD, () => ArchiveReader.Read(archive));
     }
@@ -193,20 +193,20 @@ public class CompressedArchiveTests
     [Fact]
     public void Reader_HugeBlockRawLength_FailsWithoutHugeAllocation()
     {
-        // Заголовок першого блока на зсуві 74, raw_len на 80..83.
+        // Запис першого блока на зсуві 64, raw_len на 70..73.
         byte[] archive = SmallCompressedArchive();
-        archive[80] = 0x7F;
+        archive[70] = 0x7F;
 
         TestData.AssertCode(ErrorCode.E_PAYLOAD, () => ArchiveReader.Read(archive));
     }
 
     [Fact]
-    public void Reader_UnknownBlockStrategy_E_CODE()
+    public void Reader_UnknownBlockFlags_E_PAYLOAD()
     {
-        // Стратегія першого блока на зсуві 88.
+        // block_flags першого блока на зсуві 78; біти 1–7 мають бути нульові.
         byte[] archive = SmallCompressedArchive();
-        archive[88] = 200;
+        archive[78] = 200;
 
-        TestData.AssertCode(ErrorCode.E_CODE, () => ArchiveReader.Read(archive));
+        TestData.AssertCode(ErrorCode.E_PAYLOAD, () => ArchiveReader.Read(archive));
     }
 }

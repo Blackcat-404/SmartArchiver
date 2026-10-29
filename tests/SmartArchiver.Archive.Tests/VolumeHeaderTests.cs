@@ -26,7 +26,7 @@ public class VolumeHeaderTests
         byte[] nonce = Enumerable.Range(0x20, 12).Select(i => (byte)i).ToArray();
         var header = new VolumeHeader
         {
-            VolumeNumber = 2,
+            VolumeIndex = 2,
             VolumeCount = 3,
             Salt = salt,
             Nonce = nonce,
@@ -46,7 +46,7 @@ public class VolumeHeaderTests
     {
         var header = new VolumeHeader
         {
-            VolumeNumber = 1,
+            VolumeIndex = 1,
             VolumeCount = 4,
             Salt = TestData.RandomBytes(16, 1),
             Nonce = TestData.RandomBytes(12, 2),
@@ -56,7 +56,7 @@ public class VolumeHeaderTests
         VolumeHeader parsed = VolumeHeader.Parse(header.ToBytes());
 
         Assert.Equal(header.Version, parsed.Version);
-        Assert.Equal(header.VolumeNumber, parsed.VolumeNumber);
+        Assert.Equal(header.VolumeIndex, parsed.VolumeIndex);
         Assert.Equal(header.VolumeCount, parsed.VolumeCount);
         Assert.Equal(header.Salt, parsed.Salt);
         Assert.Equal(header.Nonce, parsed.Nonce);
@@ -90,12 +90,12 @@ public class VolumeHeaderTests
     }
 
     [Theory]
-    [InlineData(0, 1)]
-    [InlineData(1, 0)]
+    [InlineData(1, 1)]
+    [InlineData(0, 0)]
     [InlineData(3, 2)]
-    public void Parse_InconsistentVolumeNumbers_E_PAYLOAD(int number, int count)
+    public void Parse_IndexNotBelowCount_E_VOLUMES(int index, int count)
     {
-        byte[] bytes = new VolumeHeader { VolumeNumber = (ushort)number, VolumeCount = (ushort)count }.ToBytes();
-        TestData.AssertCode(ErrorCode.E_PAYLOAD, () => VolumeHeader.Parse(bytes));
+        byte[] bytes = new VolumeHeader { VolumeIndex = (ushort)index, VolumeCount = (ushort)count }.ToBytes();
+        TestData.AssertCode(ErrorCode.E_VOLUMES, () => VolumeHeader.Parse(bytes));
     }
 }

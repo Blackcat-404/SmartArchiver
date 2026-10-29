@@ -45,12 +45,15 @@ public static class ProtectedArchive
         ArgumentNullException.ThrowIfNull(plainArchive);
         ArgumentNullException.ThrowIfNull(password);
         byte[] salt = RandomNumberGenerator.GetBytes(FormatConstants.SaltSize);
-        salt[0] &= 0x7F;
         using var keys = new KeyCache(password);
         return Seal(plainArchive, salt, RandomNumberGenerator.GetBytes(FormatConstants.NonceSize), keys.For(salt));
     }
 
-    /// <summary>Шифрує payload тому заданими ключами й додає HMAC: заголовок(41) | шифротекст | тег(32).</summary>
+    /// <summary>
+    /// Шифрує payload тому заданими ключами й додає HMAC: заголовок(41) | шифротекст | тег(32).
+    /// <paramref name="padTo"/> &gt; 0 вмикає командне розширення «вирівнювання»: payload з префіксом довжини
+    /// доповнюється до кратного розміру. Такий том читається лише з явним <c>padded: true</c>.
+    /// </summary>
     private static byte[] Seal(byte[] plainArchive, byte[] salt, byte[] nonce, (byte[] Enc, byte[] Mac) keys, int padTo = 0)
     {
         VolumeHeader original = VolumeHeader.Parse(plainArchive);
@@ -61,8 +64,7 @@ public static class ProtectedArchive
         {
             if (padTo < 16 || padTo > 1_048_576)
                 throw new ArgumentOutOfRangeException(nameof(padTo));
-            // Authenticated salt marker: a padded volume always has bit 7 set.
-            // Prefix with the original length inside the ciphertext; no cleartext length leakage.
+            // The original length goes inside the ciphertext, so the padded size reveals nothing.
             byte[] padded = new byte[checked(((payload.Length + 4 + padTo - 1) / padTo) * padTo)];
             BinaryPrimitives.WriteInt32BigEndian(padded, payload.Length);
             payload.CopyTo(padded, 4);
@@ -74,7 +76,7 @@ public static class ProtectedArchive
         CryptographicOperations.ZeroMemory(payload);
         var header = new VolumeHeader
         {
-            VolumeNumber = original.VolumeNumber,
+            VolumeIndex = original.VolumeIndex,
             VolumeCount = original.VolumeCount,
             Salt = salt,
             Nonce = nonce,
@@ -89,17 +91,25 @@ public static class ProtectedArchive
     }
 
     /// <summary>Перевіряє HMAC до дешифрування та повертає архів звичайного формату для ArchiveReader.</summary>
-    public static byte[] Unprotect(byte[] protectedArchive, string password)
+    public static byte[] Unprotect(byte[] protectedArchive, string password, bool padded = false)
     {
         ArgumentNullException.ThrowIfNull(protectedArchive);
         ArgumentNullException.ThrowIfNull(password);
         using var keys = new KeyCache(password);
-        return Open(protectedArchive, keys);
+        return Open(protectedArchive, keys, padded);
     }
 
-    private static byte[] Open(byte[] protectedArchive, KeyCache keyCache)
+    /// <summary>Кроки 1–3 розділу 4.3: довжина не менша за 73 байти, потім magic і версія.</summary>
+    private static VolumeHeader ParseHeader(byte[] volume)
     {
-        VolumeHeader header = VolumeHeader.Parse(protectedArchive);
+        if (volume.Length < FormatConstants.MinVolumeSize)
+            throw new ArchiveException(ErrorCode.E_SHORT, $"Том коротший за {FormatConstants.MinVolumeSize} байти.");
+        return VolumeHeader.Parse(volume);
+    }
+
+    private static byte[] Open(byte[] protectedArchive, KeyCache keyCache, bool padded)
+    {
+        VolumeHeader header = ParseHeader(protectedArchive);
         long expectedLength = FormatConstants.HeaderSize + (long)header.CiphertextLength + ArchiveSecurity.TagSize;
         if (protectedArchive.LongLength != expectedLength)
             throw new ArchiveException(ErrorCode.E_LENGTH, "Невірна довжина захищеного архіву.");
@@ -110,7 +120,7 @@ public static class ProtectedArchive
             throw new ArchiveException(ErrorCode.E_HMAC, "Неправильний пароль або пошкоджений архів.");
         byte[] plain = ArchiveSecurity.TransformCtr(protectedArchive.AsSpan(FormatConstants.HeaderSize,
             checked((int)header.CiphertextLength)), encKey, header.Nonce);
-        if ((header.Salt[0] & 0x80) != 0)
+        if (padded)
         {
             if (plain.Length < 4) throw new ArchiveException(ErrorCode.E_PAYLOAD, "Пошкоджений padding.");
             int originalLength = BinaryPrimitives.ReadInt32BigEndian(plain);
@@ -122,7 +132,7 @@ public static class ProtectedArchive
         }
         var originalHeader = new VolumeHeader
         {
-            VolumeNumber = header.VolumeNumber,
+            VolumeIndex = header.VolumeIndex,
             VolumeCount = header.VolumeCount,
             CiphertextLength = checked((uint)plain.Length)
         };
@@ -142,22 +152,29 @@ public static class ProtectedArchive
     /// || номер тому (uint32 big-endian), як рекомендує FORMAT_SPEC_P2 (4.2). Nonce тому не повторюється за побудовою.
     /// </summary>
     public static IReadOnlyList<byte[]> ProtectVolumes(IReadOnlyList<byte[]> volumes, string password,
-        int padTo = 0)
+        int padTo = 0) =>
+        ProtectVolumes(volumes, password, RandomNumberGenerator.GetBytes(FormatConstants.SaltSize),
+            RandomNumberGenerator.GetBytes(FormatConstants.NonceSize - sizeof(uint)), padTo);
+
+    /// <summary>
+    /// Те саме із заданими сіллю й префіксом nonce. Фіксовані значення допустимі лише в контрольних прикладах
+    /// (FORMAT_SPEC_P2, 4.2), тому метод не публічний.
+    /// </summary>
+    internal static IReadOnlyList<byte[]> ProtectVolumes(IReadOnlyList<byte[]> volumes, string password,
+        byte[] salt, byte[] noncePrefix, int padTo = 0)
     {
         ArgumentNullException.ThrowIfNull(volumes);
         ArgumentNullException.ThrowIfNull(password);
         if (volumes.Count == 0 || volumes.Count > ushort.MaxValue)
             throw new ArchiveException(ErrorCode.E_VOLUMES, "Некоректна кількість томів.");
-        byte[] salt = RandomNumberGenerator.GetBytes(FormatConstants.SaltSize);
-        salt[0] &= 0x7F;
-        if (padTo > 0) salt[0] |= 0x80;
-        byte[] noncePrefix = RandomNumberGenerator.GetBytes(FormatConstants.NonceSize - sizeof(uint));
+        if (salt.Length != FormatConstants.SaltSize || noncePrefix.Length != FormatConstants.NonceSize - sizeof(uint))
+            throw new ArgumentException("Сіль має 16 байт, префікс nonce 8 байт.", nameof(salt));
         using var keys = new KeyCache(password);
         var result = new List<byte[]>(volumes.Count);
         for (int i = 0; i < volumes.Count; i++)
         {
             VolumeHeader original = VolumeHeader.Parse(volumes[i]);
-            if (original.VolumeNumber != i + 1 || original.VolumeCount != volumes.Count)
+            if (original.VolumeIndex != i || original.VolumeCount != volumes.Count)
                 throw new ArchiveException(ErrorCode.E_VOLUMES, "Невірна послідовність томів.");
             byte[] nonce = new byte[FormatConstants.NonceSize];
             noncePrefix.CopyTo(nonce, 0);
@@ -172,7 +189,10 @@ public static class ProtectedArchive
         IFileAnalyzer? analyzer = null, int padTo = 0) =>
         ProtectVolumes(new ArchiveWriter(blockSize, analyzer).BuildVolumes(files, options), password, padTo);
 
-    public static IReadOnlyList<ExtractedFile> ReadProtectedVolumes(IReadOnlyList<byte[]> volumes, string password)
+    /// <summary>Розділ 4.3: довжина, magic, HMAC до розшифрування, потім розбір і склеювання томів.</summary>
+    /// <param name="padded">Томи записано з командним розширенням «вирівнювання» (<c>padTo</c>).</param>
+    public static IReadOnlyList<ExtractedFile> ReadProtectedVolumes(IReadOnlyList<byte[]> volumes, string password,
+        bool padded = false)
     {
         ArgumentNullException.ThrowIfNull(volumes);
         ArgumentNullException.ThrowIfNull(password);
@@ -181,15 +201,15 @@ public static class ProtectedArchive
         var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (byte[] volume in volumes)
         {
-            VolumeHeader header = VolumeHeader.Parse(volume);
+            VolumeHeader header = ParseHeader(volume);
             string identity = Convert.ToHexString(header.Salt) + Convert.ToHexString(header.Nonce);
             if (!seen.Add(identity))
                 throw new ArchiveException(ErrorCode.E_VOLUMES, "Повторне використання salt та nonce.");
         }
         using var keys = new KeyCache(password);
-        return ArchiveReader.ReadVolumes(volumes.Select(v => Open(v, keys)).ToArray());
+        return ArchiveReader.ReadVolumes(volumes.Select(v => Open(v, keys, padded)).ToArray());
     }
 
-    public static IReadOnlyList<ExtractedFile> ReadProtected(byte[] archive, string password) =>
-        ArchiveReader.Read(Unprotect(archive, password));
+    public static IReadOnlyList<ExtractedFile> ReadProtected(byte[] archive, string password, bool padded = false) =>
+        ArchiveReader.Read(Unprotect(archive, password, padded));
 }

@@ -20,13 +20,13 @@ public static class MetadataLeakageAnalyzer
         foreach (byte[] volume in volumes)
         {
             VolumeHeader header = VolumeHeader.Parse(volume);
-            if (header.VolumeCount != expected || !numbers.Add(header.VolumeNumber) ||
+            if (header.VolumeCount != expected || !numbers.Add(header.VolumeIndex) ||
                 volume.LongLength != FormatConstants.HeaderSize + (long)header.CiphertextLength + FormatConstants.TagSize)
                 throw new ArgumentException("Некоректний набір зашифрованих томів.", nameof(volumes));
             lengths.Add(header.CiphertextLength);
             total += volume.LongLength;
         }
-        if (numbers.Count != expected || Enumerable.Range(1, expected).Any(i => !numbers.Contains((ushort)i)))
+        if (numbers.Count != expected || Enumerable.Range(0, expected).Any(i => !numbers.Contains((ushort)i)))
             throw new ArgumentException("Набір томів неповний.", nameof(volumes));
         return new MetadataLeakageReport(expected, total, lengths.AsReadOnly(), true, false, false, false);
     }

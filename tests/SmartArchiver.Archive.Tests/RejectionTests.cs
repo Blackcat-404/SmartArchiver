@@ -6,17 +6,17 @@ namespace SmartArchiver.Archive.Tests;
 /// <summary>Writer і Reader відхиляють небезпечні, пошкоджені й обрізані дані контрольованими помилками.</summary>
 public class RejectionTests
 {
-    // Розкладка архіву з одним файлом "a.txt" на 10 байт (див. FileTableEntry і ArchiveWriter):
+    // Розкладка архіву з одним файлом "a.txt" на 10 байт (FORMAT_SPEC_P2, розділ 2):
     //   0..41   заголовок тому
-    //   41..45  file_count
+    //   41..43  file_count, 43 flags, 44 reserved
     //   45..47  name_len, 47..52 ім'я "a.txt"
-    //   52..60  size, 60..64 crc32, 64 тип, 65 стратегія, 66..74 зміщення
-    //   74..89  заголовок блока (15 байт), 89..99 дані
+    //   52..56  orig_size, 56..60 crc32, 60 file_type, 61 strategy
+    //   62..64  block_count, 64..79 запис блока (15 байт), 79..89 дані
     private const int NameOffset = 47;
     private const int SizeOffset = 52;
-    private const int KindOffset = 64;
-    private const int StrategyOffset = 65;
-    private const int DataOffset = 89;
+    private const int KindOffset = 60;
+    private const int StrategyOffset = 61;
+    private const int DataOffset = 79;
 
     private static byte[] SingleFileArchive(string name = "a.txt")
     {
@@ -28,7 +28,7 @@ public class RejectionTests
     public void Layout_AssumptionsOfTheseTests_AreCorrect()
     {
         byte[] archive = SingleFileArchive();
-        Assert.Equal(99, archive.Length);
+        Assert.Equal(89, archive.Length);
         Assert.Equal((byte)'a', archive[NameOffset]);
         Assert.Equal((byte)'0', archive[DataOffset]);
     }
@@ -139,7 +139,7 @@ public class RejectionTests
     public void Reader_SizeInTableDiffersFromBlocks_E_PAYLOAD()
     {
         byte[] archive = SingleFileArchive();
-        archive[SizeOffset + 7] += 1;   // 10 -> 11
+        archive[SizeOffset + 3] += 1;   // 10 -> 11
         TestData.AssertCode(ErrorCode.E_PAYLOAD, () => ArchiveReader.Read(archive));
     }
 
@@ -147,7 +147,7 @@ public class RejectionTests
     public void Reader_HugeDeclaredSize_FailsWithoutHugeAllocation()
     {
         byte[] archive = SingleFileArchive();
-        archive[SizeOffset] = 0x7F;   // ~9 ексабайтів
+        archive[SizeOffset] = 0x7F;   // ~2 ГБ
         TestData.AssertCode(ErrorCode.E_PAYLOAD, () => ArchiveReader.Read(archive));
     }
 
@@ -155,7 +155,7 @@ public class RejectionTests
     public void Reader_HugeFileCount_FailsWithoutHugeAllocation()
     {
         byte[] archive = SingleFileArchive();
-        archive[41] = 0xFF;   // file_count ≈ 4 мільярди
+        archive[41] = 0xFF;   // file_count ≈ 65 тисяч
         TestData.AssertCode(ErrorCode.E_PAYLOAD, () => ArchiveReader.Read(archive));
     }
 

@@ -9,8 +9,8 @@ public class EdgeCaseTests
     {
         byte[] archive = new ArchiveWriter().Build(Array.Empty<ArchiveInput>());
 
-        // 41 байт заголовка + 4 байти file_count = 0
-        Assert.Equal(FormatConstants.HeaderSize + 4, archive.Length);
+        // 41 байт заголовка + file_count = 0, flags, reserved, block_count = 0
+        Assert.Equal(FormatConstants.HeaderSize + 6, archive.Length);
         Assert.Empty(ArchiveReader.Read(archive));
     }
 

@@ -1388,3 +1388,41 @@ IReadOnlyList<Lz77PreparedBlock> coderOnly =
     Lz77CompressionService.PrepareFixedBlocks(ciphertext, Lz77ParseMode.Lazy, blockSize, allowStored: false);
 ```
 
+## 17. Контейнер архіву побайтово за специфікацією
+
+**Промпт:**
+
+> Наш архів не збігається з FORMAT_SPEC_P2: інша нумерація томів, інша розкладка payload і таблиці блоків, лічильник CTR з 0, немає E_SHORT. Через це ми не прочитаємо архіви інших команд. Як привести контейнер до специфікації і як довести, що вийшло побайтово правильно, якщо еталонних файлів ще немає? Дай приклад коду.
+
+**Відповідь:**
+
+**Доказ без еталонних файлів.** Специфікація наводить усі 99 байтів payload контрольного прикладу `ref_01`. З них виходить найсильніший тест: запис має давати ці байти один в один, а читач має відновлювати файл саме з байтів специфікації. Тоді перевіряється і розкладка, і канонічні коди Гаффмана, і порядок полів.
+
+```csharp
+[Fact]
+public void Ref01_PayloadIsReproducedByteForByte()
+{
+    byte[] volume = new ArchiveWriter(analyzer: new Compress()).Build([new ArchiveInput("hello.txt", Hello)]);
+
+    Assert.Equal(Convert.ToHexString(Ref01Payload), Convert.ToHexString(volume.AsSpan(FormatConstants.HeaderSize)));
+}
+```
+
+**Лічильник CTR** перевіряється окремо: перший блок ключового потоку має дорівнювати AES від `nonce || 00000001`.
+
+```csharp
+byte[] keystream = ArchiveSecurity.TransformCtr(new byte[16], key, Nonce);
+
+Assert.Equal(aes.EncryptEcb([.. Nonce, 0, 0, 0, 1], PaddingMode.None), keystream);
+```
+
+**Строгий читач.** Таблиця блоків іде окремо від даних, тож спершу читаються всі записи, а потім сума `coded_len` звіряється з тим, що лишилося в payload. Зайві байти означають `E_PAYLOAD`. Так само відхиляються ненульові `flags` і `reserved` та невідомі біти `block_flags`.
+
+```csharp
+if (dataLength != reader.Remaining)
+    throw new ArchiveException(ErrorCode.E_PAYLOAD,
+        $"Дані блоків займають {dataLength} байт, а після таблиці блоків лишилося {reader.Remaining}.");
+```
+
+**Командні розширення** не повинні вгадуватися з даних, які в чужому архіві випадкові (наприклад, біт солі). Їх треба вмикати явним параметром, щоб звичайне читання завжди йшло строго за специфікацією.
+

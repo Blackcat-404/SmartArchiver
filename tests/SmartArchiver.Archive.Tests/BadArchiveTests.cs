@@ -9,7 +9,7 @@ namespace SmartArchiver.Archive.Tests;
 public class BadArchiveTests
 {
     private const string Password = "p@ss";
-    private const int NameStart = 47;                // 41 заголовок + 4 file_count + 2 name_len
+    private const int NameStart = 47;                // 41 заголовок + file_count, flags, reserved + 2 name_len
     private static readonly byte[] Content = TestData.RandomBytes(300, 7);
 
     private static byte[] Plain() => new ArchiveWriter(1000).Build([TestData.File("a.txt", Content)]);
@@ -52,10 +52,10 @@ public class BadArchiveTests
                 switch (name)
                 {
                     case "bad_payload.arc":
-                        plain.AsSpan(FormatConstants.HeaderSize, 4).Fill(0xFF);                     // file_count = 4 млрд
+                        plain.AsSpan(FormatConstants.HeaderSize, 2).Fill(0xFF);                     // file_count = 65535
                         break;
                     case "bad_code.arc":
-                        plain[NameStart + "a.txt".Length + 8 + 4 + 1] = 200;                         // невідома стратегія
+                        plain[NameStart + "a.txt".Length + 4 + 4 + 1] = 200;                         // невідома стратегія
                         break;
                     case "bad_crc.arc":
                         plain[^1] ^= 1;                                                              // змінений байт даних

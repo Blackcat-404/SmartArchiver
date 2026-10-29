@@ -43,7 +43,7 @@ public class MultiVolumeTests
         for (int i = 0; i < volumes.Count; i++)
         {
             VolumeHeader header = VolumeHeader.Parse(volumes[i]);
-            Assert.Equal(i + 1, header.VolumeNumber);
+            Assert.Equal(i, header.VolumeIndex);
             Assert.Equal(volumes.Count, header.VolumeCount);
         }
     }

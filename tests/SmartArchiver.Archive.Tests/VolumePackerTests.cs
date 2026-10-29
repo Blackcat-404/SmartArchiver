@@ -9,12 +9,13 @@ public class VolumePackerTests
     private static readonly int[] OnlySecondFile = [1];
 
     // Місткість W = max − 77 (заголовок 41 + HMAC 32 + file_count 4) − записи таблиці файлів тому.
-    private const int Overhead = 77;
+    private const int Overhead = 79;
 
     [Fact]
-    public void FixedOverhead_IsHeaderPlusHmacPlusFileCount()
+    public void FixedOverhead_IsHeaderPlusHmacPlusFixedPayloadFields()
     {
-        Assert.Equal(41 + 32 + 4, VolumePacker.FixedOverhead);
+        // FORMAT_SPEC_P2, розділ 7: W = max_volume_bytes − 41 − 32 − 6 − таблиця файлів.
+        Assert.Equal(41 + 32 + 6, VolumePacker.FixedOverhead);
         Assert.Equal(ArchiveSecurity.TagSize, FormatConstants.TagSize);
     }
 

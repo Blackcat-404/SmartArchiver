@@ -1048,7 +1048,7 @@ internal static class ConsoleApp
             Write("Заголовок тому (41 байт)", ConsoleColor.Cyan);
             Console.WriteLine($"  Magic:            {Encoding.ASCII.GetString(FormatConstants.Magic)}");
             Console.WriteLine($"  Версія формату:   {header.Version}");
-            Console.WriteLine($"  Том:              {header.VolumeNumber} з {header.VolumeCount}");
+            Console.WriteLine($"  Том:              volume_index {header.VolumeIndex} (з 0), усього {header.VolumeCount}");
             Console.WriteLine($"  Довжина payload:  {header.CiphertextLength} байт");
             Console.WriteLine($"  Сіль:             {Convert.ToHexString(header.Salt)}");
             Console.WriteLine($"  Nonce:            {Convert.ToHexString(header.Nonce)}");
