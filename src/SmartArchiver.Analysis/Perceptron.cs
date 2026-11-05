@@ -2,9 +2,22 @@ using System.Text.Json;
 
 namespace SmartArchiver.Analysis;
 
+/// <summary>Nonlinearity of the hidden layers.</summary>
+public enum HiddenActivation
+{
+    /// <summary>tanh(x); its derivative is 1 − a².</summary>
+    Tanh,
+
+    /// <summary>
+    /// x / (1 + |x|); its derivative is (1 − |a|)². Uses only addition, division and absolute value, which IEEE 754
+    /// rounds the same way on every machine, so a prediction made at packing is repeated exactly at unpacking.
+    /// </summary>
+    Softsign,
+}
+
 /// <summary>
 /// Multilayer perceptron for classification, written from scratch.
-/// Hidden layers use tanh, the output layer uses softmax, the loss is cross-entropy,
+/// Hidden layers use tanh or softsign, the output layer uses softmax, the loss is cross-entropy,
 /// and training is plain stochastic gradient descent with backpropagation.
 /// </summary>
 public sealed class Perceptron
@@ -20,9 +33,11 @@ public sealed class Perceptron
     /// <summary>Creates a network with random weights (Glorot uniform) and zero biases.</summary>
     /// <param name="layerSizes">Neurons per layer: inputs first, classes last, for example [2, 4, 2].</param>
     /// <param name="seed">Seed of the weight initialisation, so that a run can be repeated.</param>
-    public Perceptron(IReadOnlyList<int> layerSizes, int seed)
+    /// <param name="activation">Nonlinearity of the hidden layers.</param>
+    public Perceptron(IReadOnlyList<int> layerSizes, int seed, HiddenActivation activation = HiddenActivation.Tanh)
     {
         this.layerSizes = ValidateSizes(layerSizes);
+        Activation = activation;
         var random = new Random(seed);
         Weights = new double[this.layerSizes.Length - 1][];
         Biases = new double[this.layerSizes.Length - 1][];
@@ -38,9 +53,13 @@ public sealed class Perceptron
     }
 
     /// <summary>Creates a network with the given weights; used by tests and by <see cref="Load"/>.</summary>
-    internal Perceptron(IReadOnlyList<int> layerSizes, double[][] weights, double[][] biases)
+    internal Perceptron(IReadOnlyList<int> layerSizes, double[][] weights, double[][] biases,
+        HiddenActivation activation = HiddenActivation.Tanh)
     {
         this.layerSizes = ValidateSizes(layerSizes);
+        if (!Enum.IsDefined(activation))
+            throw new ArgumentException($"Unknown activation {activation}.", nameof(activation));
+        Activation = activation;
         int layers = this.layerSizes.Length - 1;
         if (weights.Length != layers || biases.Length != layers)
             throw new ArgumentException("Weights and biases must have one entry per layer.");
@@ -57,6 +76,8 @@ public sealed class Perceptron
 
     public IReadOnlyList<int> LayerSizes => layerSizes;
 
+    public HiddenActivation Activation { get; }
+
     /// <summary>Weights of each layer, row-major: Weights[layer][output * inputs + input].</summary>
     internal double[][] Weights { get; }
 
@@ -64,6 +85,12 @@ public sealed class Perceptron
 
     /// <summary>Probability of each class for the input.</summary>
     public double[] Forward(ReadOnlySpan<double> input) => Activations(input)[^1];
+
+    /// <summary>
+    /// Output layer values before softmax. Their largest value marks the same class as <see cref="Forward"/>,
+    /// but they need no exponent, so with <see cref="HiddenActivation.Softsign"/> they are bit-exact everywhere.
+    /// </summary>
+    public double[] Logits(ReadOnlySpan<double> input) => Activations(input, softmaxOutput: false)[^1];
 
     /// <summary>The most probable class.</summary>
     public int Classify(ReadOnlySpan<double> input)
@@ -124,7 +151,7 @@ public sealed class Perceptron
     public void Save(Stream stream)
     {
         ArgumentNullException.ThrowIfNull(stream);
-        JsonSerializer.Serialize(stream, new PerceptronFile(layerSizes, Weights, Biases), JsonOptions);
+        JsonSerializer.Serialize(stream, new PerceptronFile(layerSizes, Weights, Biases, Activation.ToString()), JsonOptions);
     }
 
     /// <exception cref="InvalidDataException">The stream does not hold a valid saved network.</exception>
@@ -144,7 +171,11 @@ public sealed class Perceptron
             throw new InvalidDataException("The weights file must contain layerSizes, weights and biases.");
         try
         {
-            return new Perceptron(file.LayerSizes, file.Weights, file.Biases);
+            // Files saved before the activation became configurable have no such field and used tanh.
+            HiddenActivation activation = file.HiddenActivation is null
+                ? HiddenActivation.Tanh
+                : Enum.Parse<HiddenActivation>(file.HiddenActivation, ignoreCase: true);
+            return new Perceptron(file.LayerSizes, file.Weights, file.Biases, activation);
         }
         catch (ArgumentException ex)
         {
@@ -153,7 +184,7 @@ public sealed class Perceptron
     }
 
     /// <summary>Outputs of every layer: [0] is the input, the last one is the softmax.</summary>
-    private double[][] Activations(ReadOnlySpan<double> input)
+    private double[][] Activations(ReadOnlySpan<double> input, bool softmaxOutput = true)
     {
         if (input.Length != layerSizes[0])
             throw new ArgumentException($"The network expects {layerSizes[0]} inputs, got {input.Length}.", nameof(input));
@@ -173,7 +204,9 @@ public sealed class Perceptron
                 z[o] = sum;
             }
             bool isOutput = layer == Weights.Length - 1;
-            activations[layer + 1] = isOutput ? Softmax(z) : Array.ConvertAll(z, Math.Tanh);
+            activations[layer + 1] = isOutput
+                ? (softmaxOutput ? Softmax(z) : z)
+                : Array.ConvertAll<double, double>(z, Activation == HiddenActivation.Tanh ? Math.Tanh : Softsign);
         }
         return activations;
     }
@@ -209,12 +242,19 @@ public sealed class Perceptron
                 double sum = 0;
                 for (int o = 0; o < delta.Length; o++)
                     sum += Weights[layer][o * input.Length + i] * delta[o];
-                previousDelta[i] = sum * (1 - input[i] * input[i]);
+                previousDelta[i] = sum * Derivative(input[i]);
             }
             delta = previousDelta;
         }
         return (weightGrads, biasGrads);
     }
+
+    private static double Softsign(double x) => x / (1 + Math.Abs(x));
+
+    /// <summary>Derivative of the hidden activation, expressed through its output a.</summary>
+    private double Derivative(double a) => Activation == HiddenActivation.Tanh
+        ? 1 - a * a
+        : (1 - Math.Abs(a)) * (1 - Math.Abs(a));
 
     private static double[] Softmax(double[] z)
     {
@@ -245,5 +285,5 @@ public sealed class Perceptron
         return [.. layerSizes];
     }
 
-    private sealed record PerceptronFile(int[]? LayerSizes, double[][]? Weights, double[][]? Biases);
+    private sealed record PerceptronFile(int[]? LayerSizes, double[][]? Weights, double[][]? Biases, string? HiddenActivation);
 }

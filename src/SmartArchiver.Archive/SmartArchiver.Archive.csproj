@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\SmartArchiver.Core\SmartArchiver.Core.csproj" />
+    <ProjectReference Include="..\SmartArchiver.Compression\SmartArchiver.Compression.csproj" />
     <ProjectReference Include="..\SmartArchiver.Security\SmartArchiver.Security.csproj" />
     <Using Include="SmartArchiver.Core" />
     <InternalsVisibleTo Include="SmartArchiver.Archive.Tests" />

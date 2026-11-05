@@ -1,16 +1,23 @@
 using System.Globalization;
+using System.Text.Json;
+using SmartArchiver.Compression;
 using System.Text;
 using SmartArchiver.Analysis;
 using SmartArchiver.Archive;
 using SmartArchiver.Core;
 using SmartArchiver.Data;
+using SmartArchiver.Data.Entities;
+using ArchiveVariant = SmartArchiver.Archive.StrategyVariant;
+using DataVariant = SmartArchiver.Data.Entities.StrategyVariant;
+using SmartArchiver.Compression.Benchmarks;
+using SmartArchiver.Optimization;
 
 namespace SmartArchiver.Cli;
 
 /// <summary>
 /// Консольний інтерфейс чекпоінта 1.
 /// Без аргументів запускає інтерактивне меню, з аргументами працює як звичайна команда
-/// (pack, unpack, info, demo, db, analyze).
+/// (pack, unpack, info, demo, db, analyze, experiment).
 /// </summary>
 internal static class ConsoleApp
 {
@@ -47,7 +54,7 @@ internal static class ConsoleApp
         switch (args[0].ToLowerInvariant())
         {
             case "pack" when args.Length >= 3:
-                PackFiles(args[1], args[2..], FormatConstants.DefaultBlockSize);
+                PackCommand(args);
                 return 0;
             case "unpack" when args.Length == 3:
                 UnpackFile(args[1], args[2]);
@@ -64,15 +71,69 @@ internal static class ConsoleApp
             case "analyze" when args.Length == 2:
                 AnalyzeFile(args[1]);
                 return 0;
+            case "train-classifier" when args.Length <= 3:
+                TrainClassifier(args.Length > 1 ? args[1] : "Datasets", args.Length > 2 ? args[2] : "classifier.json");
+                return 0;
+            case "train-predictor" when args.Length <= 3:
+                TrainPredictor(args.Length > 1 ? args[1] : "Datasets", args.Length > 2 ? args[2] : "predictor.json");
+                return 0;
+            case "prediction-experiment" when args.Length <= 2:
+                RunPredictionExperiment(args.Length > 1 ? args[1] : "Datasets");
+                return 0;
+            case "prediction-q" when args.Length <= 3:
+                RunPredictionQ(args.Length > 1 ? args[1] : "Datasets", args.Length > 2 ? args[2] : null);
+                return 0;
+            case "block-impact" when args.Length <= 3:
+                RunBlockImpact(args.Length > 1 ? args[1] : "Datasets", args.Length > 2 ? args[2] : null);
+                return 0;
+            case "encryption-order" when args.Length <= 2:
+                RunEncryptionOrder(args.Length > 1 ? args[1] : "Datasets");
+                return 0;
+            case "strategy-experiment" when args.Length <= 2:
+                RunStrategyExperiment(args.Length > 1 ? args[1] : "Datasets");
+                return 0;
+            case "experiment" when args.Length == 2:
+                RunParsingComparison(args[1]);
+                return 0;
+            case "pack-experiment" when args.Length <= 4:
+                PackExperimentCommand(args);
+                return 0;
+            case "measure" when args.Length <= 3:
+                MeasureQ(args.Length > 1 ? args[1] : "Datasets", args.Length > 2 ? args[2] : null);
+                return 0;
+            case "history" when args.Length <= 2:
+                ShowHistory(args.Length > 1 ? HistoryCount(args[1]) : 20);
+                return 0;
+            case "export-ga" when args.Length == 3:
+                return ExportGeneticJournal(args[1], args[2]);
+            case "genetic-experiment" when args.Length <= 4:
+                RunGeneticExperiment(
+                    args.Length > 1 && !args[1].Equals("full", StringComparison.OrdinalIgnoreCase) ? args[1] : "Datasets",
+                    args.Length > 2 && !args[2].Equals("full", StringComparison.OrdinalIgnoreCase) ? args[2] : null,
+                    args.Any(a => a.Equals("full", StringComparison.OrdinalIgnoreCase)));
+                return 0;
             default:
                 Console.WriteLine("Використання:");
                 Console.WriteLine("  smartarchiver                            інтерактивне меню");
-                Console.WriteLine("  smartarchiver pack <archive.arc> <файл>...  запакувати файли");
-                Console.WriteLine("  smartarchiver unpack <archive.arc> <тека>   розпакувати");
+                Console.WriteLine("  smartarchiver pack <archive.arc> [--volume-size <байт>] <файл>...  запакувати: аналіз, стиснення, шифрування, томи");
+                Console.WriteLine("  smartarchiver unpack <archive.arc> <тека>   розпакувати атомарно (для томів name.partN.arc достатньо вказати будь-який том)");
                 Console.WriteLine("  smartarchiver info <archive.arc>            показати вміст");
                 Console.WriteLine("  smartarchiver demo                          автоматична демонстрація");
                 Console.WriteLine("  smartarchiver db                            стан бази даних (створює її, якщо ще немає)");
-                Console.WriteLine("  smartarchiver analyze <файл>                ознаки вмісту файлу (ентропія, текстовість тощо)");
+                Console.WriteLine("  smartarchiver analyze <файл>                ознаки, тип файлу і стратегія стиснення");
+                Console.WriteLine("  smartarchiver train-classifier [датасет] [модель.json]  навчити класифікатор (за замовчуванням Datasets)");
+                Console.WriteLine("  smartarchiver train-predictor [датасет] [модель.json]   навчити передбачення наступного байта");
+                Console.WriteLine("  smartarchiver prediction-experiment [датасет]          вплив передбачення на ентропію і розмір");
+                Console.WriteLine("  smartarchiver prediction-q [датасет] [team_config.json]  Q з прогнозом байта і без, по групах");
+                Console.WriteLine("  smartarchiver block-impact [датасет] [team_config.json]  Q з вимкненим по черзі блоком тракту (таблиця звіту 2)");
+                Console.WriteLine("  smartarchiver encryption-order [датасет]   «стиснути → зашифрувати» проти зворотного порядку (таблиця звіту 4)");
+                Console.WriteLine("  smartarchiver strategy-experiment [датасет]            фіксована стратегія проти класифікатора");
+                Console.WriteLine("  smartarchiver experiment <тека>            порівняти Greedy та Lazy на Datasets");
+                Console.WriteLine("  smartarchiver pack-experiment [датасет] [місткість тому] [team_config.json]  ДП-рюкзак проти жадібного пакування томів");
+                Console.WriteLine("  smartarchiver measure [датасет] [team_config.json]  виміряти Q на всьому корпусі, результат у БД");
+                Console.WriteLine("  smartarchiver history [кількість]           останні операції з історії архівацій (без імен файлів і паролів)");
+                Console.WriteLine("  smartarchiver export-ga <id експерименту> <файл.csv>  журнал еволюції ГА з БД у CSV");
+                Console.WriteLine("  smartarchiver genetic-experiment [датасет] [team_config.json] [full]  ГА проти випадкового пошуку; full = повна хромосома і локальний пошук");
                 return 1;
         }
     }
@@ -84,8 +145,8 @@ internal static class ConsoleApp
     private static int Interactive()
     {
         Write("==============================================", ConsoleColor.Cyan);
-        Write("  SmartArchiver, чекпоінт 1: формат і томи", ConsoleColor.Cyan);
-        Write("  (без стиснення й шифрування, це наступні етапи)", ConsoleColor.DarkCyan);
+        Write("  SmartArchiver, чекпоінт 3: повний тракт зі стисненням і шифруванням", ConsoleColor.Cyan);
+        Write("  (пароль береться зі змінної SMARTARCHIVER_PASSWORD або вводиться без показу)", ConsoleColor.DarkCyan);
         Write("==============================================", ConsoleColor.Cyan);
 
         while (true)
@@ -97,6 +158,7 @@ internal static class ConsoleApp
             Console.WriteLine("  4) Демонстрація: усі можливості на прикладі");
             Console.WriteLine("  5) База даних: стан і створення схеми");
             Console.WriteLine("  6) Аналіз файлу: ознаки вмісту");
+            Console.WriteLine("  7) Експерименти: порівняння алгоритмів");
             Console.WriteLine("  0) Вихід");
 
             string? choice = Prompt("Ваш вибір");
@@ -113,11 +175,12 @@ internal static class ConsoleApp
                 case "4": Guard(Demo); break;
                 case "5": Guard(ShowDatabase); break;
                 case "6": Guard(AnalyzeInteractive); break;
+                case "7": Guard(ExperimentsMenu); break;
                 case "0":
                     Console.WriteLine("До побачення!");
                     return 0;
                 default:
-                    Write("Невідомий пункт. Введіть число від 0 до 6.", ConsoleColor.Yellow);
+                    Write("Невідомий пункт. Введіть число від 0 до 7.", ConsoleColor.Yellow);
                     break;
             }
         }
@@ -193,6 +256,13 @@ internal static class ConsoleApp
             Write($"Некоректне значення, беремо {blockSize}.", ConsoleColor.Yellow);
         }
 
+        string? volumeText = Prompt("Найбільший розмір тому в байтах (0 = один том без обмеження)", "0");
+        if (!long.TryParse(volumeText, NumberStyles.None, CultureInfo.InvariantCulture, out long volumeSize))
+        {
+            volumeSize = 0;
+            Write("Некоректне значення, пишемо один том.", ConsoleColor.Yellow);
+        }
+
         string? archivePath = Prompt("Куди зберегти архів", "archive.arc");
         if (string.IsNullOrEmpty(archivePath))
         {
@@ -210,7 +280,7 @@ internal static class ConsoleApp
             return;
         }
 
-        PackFiles(archivePath, paths.ToArray(), blockSize);
+        PackFiles(archivePath, paths.ToArray(), blockSize, volumeSize);
     }
 
     private static void UnpackInteractive()
@@ -251,11 +321,531 @@ internal static class ConsoleApp
         AnalyzeFile(path);
     }
 
+    /// <summary>Меню експериментів другого чекпоінту.</summary>
+    private static void ExperimentsMenu()
+    {
+        while (true)
+        {
+            Console.WriteLine();
+            Write("========== Експерименти ==========", ConsoleColor.Cyan);
+            Console.WriteLine("  1) Порівняти Greedy та Lazy LZ77");
+            Console.WriteLine("  2) Навчити класифікатор типу файлу");
+            Console.WriteLine("  3) Вплив передбачення наступного байта");
+            Console.WriteLine("  4) ДП-рюкзак проти жадібного пакування томів");
+            Console.WriteLine("  5) Фіксована стратегія стиснення проти класифікатора");
+            Console.WriteLine("  6) Виміряти Q на всьому корпусі");
+            Console.WriteLine("  7) Ітеративний DP + Huffman (D1 №19)");
+            Console.WriteLine("  8) Порівняння арифметичного кодування з Гаффманом");
+            Console.WriteLine("  9) Бонус CP3 №4: SmartArchiver проти zip -9");
+            Console.WriteLine("  0) Повернутися до головного меню");
+
+            string? choice = Prompt("Ваш вибір");
+            switch (choice)
+            {
+                case "1":
+                    Guard(ParsingComparisonInteractive);
+                    break;
+                case "2":
+                    Guard(TrainClassifierInteractive);
+                    break;
+                case "3":
+                    Guard(PredictionExperimentInteractive);
+                    break;
+                case "4":
+                    Guard(PackingExperimentInteractive);
+                    break;
+                case "5":
+                    Guard(StrategyExperimentInteractive);
+                    break;
+                case "6":
+                    Guard(MeasureInteractive);
+                    break;
+                case "7":
+                    Guard(IterativeDpExperimentInteractive);
+                    break;
+                case "8":
+                    Guard(ArithmeticExperimentInteractive);
+                    break;
+                case "9":
+                    Guard(Zip9BonusInteractive);
+                    break;
+                case "0":
+                case null:
+                    return;
+                default:
+                    Write("Невідомий пункт. Введіть число від 0 до 6.", ConsoleColor.Yellow);
+                    break;
+            }
+        }
+    }
+
+    private static void ParsingComparisonInteractive()
+    {
+        // Папку з даними можна вказати будь-яку; за замовчуванням Datasets.
+        string? path = Prompt("Каталог із групами 0..6 (Натисніть Enter для використання за замовчуванням)", "Datasets");
+        if (path is null)
+            return;
+
+        RunParsingComparison(path);
+    }
+
+    private static void RunParsingComparison(string datasetPath)
+    {
+        Write("Запускаємо порівняння Greedy та Lazy...", ConsoleColor.Cyan);
+
+        // Бібліотека Compression виконує вимірювання без доступу до БД.
+        IReadOnlyList<ParsingGroupMeasurement> measurements =
+            ParsingComparisonRunner.RunDirectory(datasetPath);
+
+        Console.WriteLine();
+        Console.WriteLine($"  {"Група",-7} {"Метод",-8} {"Було (байт)",14} {"Стало (байт)",15} {"Час (с)",12}");
+        foreach (ParsingGroupMeasurement measurement in measurements)
+        {
+            Console.WriteLine($"  {measurement.Group,-7} {measurement.Method,-8} {measurement.OriginalBytes,14} {measurement.EncodedBytes,15} {measurement.ElapsedSeconds,12:F4}");
+        }
+
+        // Створюємо сутності Data лише на рівні застосунку.
+        var experiment = new Experiment
+        {
+            Kind = ExperimentKind.Parsing,
+            StartedAtUtc = DateTime.UtcNow,
+            Dataset = Path.GetFullPath(datasetPath),
+            ParametersJson = JsonSerializer.Serialize(new
+            {
+                blockSize = ParsingComparisonRunner.BlockSize,
+                maxChain = 256,
+                minLazyGain = 2,
+                timeScope = "LZ77 parsing + Huffman encoding",
+                sizeScope = "encoded block without archive container",
+                grouping = "subdirectories 0..6"
+            })
+        };
+
+        foreach (ParsingGroupMeasurement measurement in measurements)
+        {
+            experiment.ParsingResults.Add(new ParsingResult
+            {
+                Group = measurement.Group,
+                Method = measurement.Method switch
+                {
+                    Lz77ParsingMethod.Greedy => ParsingMethod.Greedy,
+                    Lz77ParsingMethod.Lazy => ParsingMethod.Lazy,
+
+                    // Захист від невідомого значення переліку.
+                    _ => throw new InvalidOperationException(
+                        $"Непідтримуваний метод розбору LZ77: {measurement.Method}")
+                },
+                OriginalBytes = measurement.OriginalBytes,
+                EncodedBytes = measurement.EncodedBytes,
+                ElapsedSeconds = measurement.ElapsedSeconds
+            });
+        }
+
+        IMeasurementStore store = OpenMeasurementStore();
+        if (store.IsEnabled)
+        {
+            store.SaveExperiment(experiment);
+            Write($"[OK] Експеримент №{experiment.Id} збережено в базі даних.", ConsoleColor.Green);
+        }
+        else
+        {
+            Write("[УВАГА] База даних вимкнена: результати виведено лише в консоль.", ConsoleColor.Yellow);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Експеримент: ДП-рюкзак проти жадібного пакування томів
+    // ------------------------------------------------------------------
+
+    /// <summary>Розмір блока в експерименті: щоб блок (до 16 КіБ + 15 байт) влазив у том навіть невеликої місткості.</summary>
+    private const int PackingBlockSize = 16_384;
+
+    /// <summary>Місткість тому за замовчуванням, поки немає team_config.json: корпус займає кілька томів.</summary>
+    private const long DefaultPackingVolumeBytes = 65_536;
+
+    private static void PackExperimentCommand(string[] args)
+    {
+        string dataset = args.Length > 1 ? args[1] : "Datasets";
+        long volumeBytes = DefaultPackingVolumeBytes;
+        if (args.Length > 2 && (!long.TryParse(args[2], NumberStyles.None, CultureInfo.InvariantCulture, out volumeBytes) || volumeBytes <= 0))
+        {
+            throw new ArgumentException("Місткість тому має бути додатним цілим числом (байт).");
+        }
+        RunPackingExperiment(dataset, volumeBytes, args.Length > 3 ? args[3] : null);
+    }
+
+    private static void PackingExperimentInteractive()
+    {
+        string? dataset = Prompt("Каталог із групами 0..6", "Datasets");
+        if (dataset is null)
+            return;
+
+        string? sizeText = Prompt("Місткість тому в байтах (max_volume_bytes)", DefaultPackingVolumeBytes.ToString(CultureInfo.InvariantCulture));
+        if (!long.TryParse(sizeText, NumberStyles.None, CultureInfo.InvariantCulture, out long volumeBytes) || volumeBytes <= 0)
+        {
+            volumeBytes = DefaultPackingVolumeBytes;
+            Write($"Некоректне значення, беремо {volumeBytes}.", ConsoleColor.Yellow);
+        }
+        RunPackingExperiment(dataset, volumeBytes, null);
+    }
+
+    /// <summary>
+    /// Усі файли корпусу проходять аналіз і стиснення, потім їхні блоки розкладаються по томах двома способами:
+    /// ДП-рюкзаком і жадібно. Обидва томи-набори записуються, читаються назад і звіряються з оригіналами.
+    /// Результати (по рядку на том і метод) пишуться в базу, якщо вона ввімкнена.
+    /// </summary>
+    private static void RunPackingExperiment(string datasetPath, long maxVolumeBytes, string? configPath)
+    {
+        CultureInfo c = CultureInfo.InvariantCulture;
+        PackingPriorities priorities = PackingPriorities.Default;
+        if (configPath is not null)
+        {
+            TeamConfig config = TeamConfig.Load(configPath);
+            maxVolumeBytes = config.MaxVolumeBytes;
+            priorities = config.Priorities;
+        }
+
+        (List<ArchiveInput> inputs, _) = LoadCorpus(datasetPath);
+
+        Console.WriteLine();
+        Write("Аналіз і стиснення файлів корпусу...", ConsoleColor.Cyan);
+        var writer = new ArchiveWriter(PackingBlockSize, new FileAnalyzer());
+        IReadOnlyList<PreparedFile> prepared = writer.Prepare(inputs);
+        PackingComparison comparison = VolumePacker.Compare(prepared, maxVolumeBytes, priorities);
+
+        int blockCount = prepared.Sum(f => f.Blocks.Count);
+        long codedBytes = prepared.Sum(f => f.CodedSize);
+        long originalBytes = prepared.Sum(f => (long)f.Size);
+        Console.WriteLine(string.Format(c, "  Файлів: {0}, блоків: {1}, вихідний обсяг: {2} байт, після стиснення: {3} байт, місткість тому: {4} байт",
+            prepared.Count, blockCount, originalBytes, codedBytes, maxVolumeBytes));
+        Console.WriteLine($"  Вага блока = coded_len + {FormatConstants.BlockHeaderSize} байт, цінність за типом файлу: {string.Join(", ", priorities.Values)} (типи 0..6)");
+        if (configPath is null)
+        {
+            Write("  [УВАГА] Пріоритети типів стандартні (заглушка): справжні задає team_config.json (4-й параметр команди).", ConsoleColor.Yellow);
+        }
+
+        Console.WriteLine();
+        Console.WriteLine($"  {"Том",4} {"Метод",-7} {"Блоків",7} {"Використано",12} {"Місткість W",12} {"Цінність",9} {"Час, мс",9}");
+        int rows = Math.Max(comparison.Dp.Volumes.Count, comparison.Greedy.Volumes.Count);
+        for (int volume = 0; volume < rows; volume++)
+        {
+            PrintPackingRow(volume, "ДП", comparison.Dp);
+            PrintPackingRow(volume, "Жадібний", comparison.Greedy);
+        }
+        Console.WriteLine();
+        foreach ((string label, PackingPlan plan) in new[] { ("ДП", comparison.Dp), ("Жадібний", comparison.Greedy) })
+        {
+            Console.WriteLine(string.Format(c, "  {0,-9} томів {1,3}, блоків {2,4}, використано {3,9} байт, цінність {4,6}, час {5,8:F3} мс",
+                label, plan.Volumes.Count, plan.TotalBlocks, plan.TotalUsedBytes, plan.TotalValue, plan.TotalSeconds * 1000));
+        }
+        VolumePlan firstDp = comparison.Dp.Volumes[0];
+        VolumePlan firstGreedy = comparison.Greedy.Volumes[0];
+        Console.WriteLine(string.Format(c, "  Перший том: цінність ДП {0}, жадібний {1}. Обидва методи зрештою розкладають усі блоки, різниця в тому, що потрапляє в ранні томи.",
+            firstDp.TotalValue, firstGreedy.TotalValue));
+
+        // Перевірка: томи обох розкладок записуються, читаються назад і дають вихідні файли.
+        foreach (PackingPlan plan in new[] { comparison.Dp, comparison.Greedy })
+        {
+            IReadOnlyList<byte[]> volumes = ArchiveWriter.BuildVolumes(prepared, plan);
+            IReadOnlyList<ExtractedFile> restored = ArchiveReader.ReadVolumes(volumes);
+            if (!SameContent(inputs, restored))
+            {
+                throw new InvalidOperationException($"Томи розкладки {plan.Algorithm} не відновили вихідні файли.");
+            }
+        }
+        Write("[OK] Томи обох розкладок записано, прочитано назад і звірено з оригіналами побайтово.", ConsoleColor.Green);
+
+        var experiment = new Experiment
+        {
+            Kind = ExperimentKind.Packing,
+            StartedAtUtc = DateTime.UtcNow,
+            Dataset = Path.GetFullPath(datasetPath),
+            ParametersJson = JsonSerializer.Serialize(new
+            {
+                maxVolumeBytes,
+                blockSize = PackingBlockSize,
+                parseMode = "Lazy",
+                weight = "coded_len + 15",
+                priorities = priorities.Values,
+                prioritiesSource = configPath is null ? "default placeholder" : Path.GetFileName(configPath),
+                capacity = "max_volume_bytes - 41 - 32 - 4 - file table of the volume",
+            }),
+        };
+        AddPackingResults(experiment, comparison.Dp, PackingMethod.Dp);
+        AddPackingResults(experiment, comparison.Greedy, PackingMethod.Greedy);
+
+        IMeasurementStore store = OpenMeasurementStore();
+        if (store.IsEnabled)
+        {
+            store.SaveExperiment(experiment);
+            Write($"[OK] Результати пакування збережено в базі даних (експеримент №{experiment.Id}).", ConsoleColor.Green);
+        }
+        else
+        {
+            Write("[УВАГА] База даних вимкнена: результати виведено лише в консоль.", ConsoleColor.Yellow);
+        }
+    }
+
+    private static void PrintPackingRow(int volume, string label, PackingPlan plan)
+    {
+        if (volume >= plan.Volumes.Count)
+            return;
+
+        VolumePlan v = plan.Volumes[volume];
+        Console.WriteLine(string.Format(CultureInfo.InvariantCulture, "  {0,4} {1,-8} {2,6} {3,12} {4,12} {5,9} {6,9:F3}",
+            volume, label, v.BlockCount, v.UsedBytes, v.CapacityBytes, v.TotalValue, v.ElapsedSeconds * 1000));
+    }
+
+    private static void AddPackingResults(Experiment experiment, PackingPlan plan, PackingMethod method)
+    {
+        foreach (VolumePlan volume in plan.Volumes)
+        {
+            experiment.PackingResults.Add(new PackingResult
+            {
+                Method = method,
+                VolumeIndex = volume.VolumeIndex,
+                CapacityBytes = volume.CapacityBytes,
+                UsedBytes = volume.UsedBytes,
+                TotalValue = volume.TotalValue,
+                BlockCount = volume.BlockCount,
+                ElapsedSeconds = volume.ElapsedSeconds,
+            });
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Вимір Q на всьому корпусі
+    // ------------------------------------------------------------------
+
+    /// <summary>Місткість тому для виміру, поки в team_config.json немає max_volume_bytes: корпус займає кілька томів.</summary>
+    private const long DefaultMeasureVolumeBytes = 262_144;
+
+    /// <summary>Пароль виміру. Це не секрет: вимір не зберігає архіви, а пароль не потрапляє ні в базу, ні в логи.</summary>
+    private const string MeasurementPassword = "algo2026";
+
+    private static void MeasureInteractive()
+    {
+        string? dataset = Prompt("Каталог із групами 0..6", "Datasets");
+        if (dataset is null)
+            return;
+        string? config = Prompt("team_config.json (Enter = стандартні α, β, t_ref і місткість)", "");
+        MeasureQ(dataset, string.IsNullOrEmpty(config) ? null : config);
+    }
+
+    /// <summary>
+    /// Одна команда на весь корпус: кожен файл проходить повний тракт з шифруванням і назад, Q = α·S + β·T,
+    /// прогін і результати по файлах пишуться в MeasurementRuns і MeasurementFileResults, якщо база ввімкнена.
+    /// </summary>
+    private static void MeasureQ(string datasetPath, string? configPath)
+    {
+        CultureInfo c = CultureInfo.InvariantCulture;
+        TeamConfig config = configPath is null
+            ? new TeamConfig(DefaultMeasureVolumeBytes, PackingPriorities.Default)
+            : TeamConfig.Load(configPath);
+        (List<ArchiveInput> inputs, List<byte> groups) = LoadCorpus(datasetPath);
+        var options = new PackOptions(MeasurementPassword, new FileAnalyzer(), MaxVolumeBytes: config.MaxVolumeBytes, Priorities: config.Priorities);
+
+        DateTime started = DateTime.UtcNow;
+        QMeasurement m = CorpusMeasurer.Measure([.. inputs.Select((input, i) => (input, groups[i]))], options, config.Alpha, config.Beta, config.TRefSeconds);
+
+        Console.WriteLine();
+        Console.WriteLine($"  {"Група",5} {"Файлів",7} {"Було, Б",10} {"В архіві, Б",12} {"Відновлено",11}");
+        foreach (IGrouping<byte, FileMeasurement> group in m.Files.GroupBy(f => f.Group).OrderBy(g => g.Key))
+        {
+            Console.WriteLine(string.Format(c, "  {0,5} {1,7} {2,10} {3,12} {4,11}", group.Key, group.Count(),
+                group.Sum(f => f.OriginalBytes), group.Sum(f => f.ArchiveBytes), group.All(f => f.Restored) ? "так" : "НІ"));
+        }
+        Console.WriteLine();
+        Console.WriteLine(string.Format(c, "  B_orig {0} Б, B_arc {1} Б у {2} том(ах), t {3:F3} с", m.OriginalBytes, m.ArchiveBytes, m.Volumes, m.Seconds));
+        Console.WriteLine(string.Format(c, "  S = {0:F4}, T = {1:F4}, Q = {2:F4}  (α = {3}, β = {4}, t_ref = {5} с)",
+            m.Score.S, m.Score.T, m.Score.Q, config.Alpha, config.Beta, config.TRefSeconds));
+        if (configPath is null)
+        {
+            Write("  [УВАГА] α, β, t_ref і місткість тому стандартні (заглушка): справжні задає team_config.json (2-й параметр команди).", ConsoleColor.Yellow);
+        }
+        if (m.AllRestored)
+        {
+            Write("[OK] Усі файли відновлено побайтово.", ConsoleColor.Green);
+        }
+        else
+        {
+            Write("[ПОМИЛКА] Є файли, що не відновилися: Q = 0.", ConsoleColor.Red);
+        }
+
+        IMeasurementStore store = OpenMeasurementStore();
+        if (!store.IsEnabled)
+        {
+            Write("[УВАГА] База даних вимкнена: результати виведено лише в консоль.", ConsoleColor.Yellow);
+            return;
+        }
+
+        var run = new MeasurementRun
+        {
+            StartedAtUtc = started,
+            CommitHash = GitCommit(),
+            Dataset = DatasetName(datasetPath),
+            Alpha = config.Alpha,
+            Beta = config.Beta,
+            TRefSeconds = config.TRefSeconds,
+            ParametersJson = JsonSerializer.Serialize(new
+            {
+                blockSize = options.BlockSize,
+                maxVolumeBytes = config.MaxVolumeBytes,
+                volumes = m.Volumes,
+                packing = "DP knapsack",
+                parseMode = "Lazy",
+                encryption = "AES-256-CTR + HMAC-SHA256, PBKDF2 once per archive",
+                config = configPath is null ? "defaults (placeholder)" : Path.GetFileName(configPath),
+            }),
+            OriginalBytes = m.OriginalBytes,
+            ArchiveBytes = m.ArchiveBytes,
+            ElapsedSeconds = m.Seconds,
+            AllRestored = m.AllRestored,
+            Q = m.Score.Q,
+            Files = [.. m.Files.Select(f => new MeasurementFileResult
+            {
+                Group = f.Group,
+                OriginalBytes = f.OriginalBytes,
+                ArchiveBytes = f.ArchiveBytes,
+                Restored = f.Restored,
+            })],
+        };
+        store.SaveRun(run);
+        Write($"[OK] Прогін №{run.Id} збережено в базі даних (файли без імен, пароль не зберігається).", ConsoleColor.Green);
+    }
+
+    /// <summary>Файли корпусу (теки 0..6) з їхніми групами. Однакові імена з різних груп отримують префікс групи.</summary>
+    private static (List<ArchiveInput> Inputs, List<byte> Groups) LoadCorpus(string datasetPath)
+    {
+        IReadOnlyList<LabeledFile> corpus = LabeledDataset.ListFiles(datasetPath);
+        if (corpus.Count == 0)
+        {
+            throw new ArgumentException($"У каталозі {datasetPath} немає файлів корпусу (теки 0..6).");
+        }
+
+        var inputs = new List<ArchiveInput>();
+        var groups = new List<byte>();
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        foreach (LabeledFile file in corpus)
+        {
+            string name = Path.GetFileName(file.Source);
+            if (!names.Add(name))
+            {
+                name = $"{file.Label}_{name}";
+                names.Add(name);
+            }
+            inputs.Add(new ArchiveInput(name, File.ReadAllBytes(file.FullPath)));
+            groups.Add((byte)file.Label);
+        }
+        return (inputs, groups);
+    }
+
+    private static string DatasetName(string datasetPath)
+    {
+        string name = Path.GetFileName(Path.GetFullPath(datasetPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+        name = name.Length == 0 ? "corpus" : name;
+        return name.Length > 100 ? name[..100] : name;
+    }
+
+    /// <summary>Коротка назва поточного коміту для журналу прогону; null, якщо git недоступний.</summary>
+    private static string? GitCommit()
+    {
+        try
+        {
+            using var git = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("git", "rev-parse --short=12 HEAD")
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+            });
+            string? line = git?.StandardOutput.ReadLine();
+            git?.WaitForExit(2000);
+            return git is { ExitCode: 0 } && !string.IsNullOrWhiteSpace(line) ? line.Trim() : null;
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Пароль береться зі змінної SMARTARCHIVER_PASSWORD (для скриптів) або вводиться без показу на екрані.
+    /// У командний рядок його не передають: він залишився б в історії оболонки.
+    /// </summary>
+    private static string ReadPassword(bool confirm)
+    {
+        string? password = Environment.GetEnvironmentVariable("SMARTARCHIVER_PASSWORD");
+        if (string.IsNullOrEmpty(password))
+        {
+            password = ReadHidden("Пароль");
+            if (confirm && !Console.IsInputRedirected && ReadHidden("Повторіть пароль") != password)
+            {
+                throw new ArgumentException("Паролі не збігаються.");
+            }
+        }
+        return string.IsNullOrEmpty(password) ? throw new ArgumentException("Пароль не може бути порожнім.") : password;
+    }
+
+    private static string ReadHidden(string label)
+    {
+        if (Console.IsInputRedirected)
+        {
+            return Console.ReadLine() ?? string.Empty;
+        }
+
+        Console.Write($"{label}: ");
+        var typed = new StringBuilder();
+        for (ConsoleKeyInfo key = Console.ReadKey(intercept: true); key.Key != ConsoleKey.Enter; key = Console.ReadKey(intercept: true))
+        {
+            if (key.Key == ConsoleKey.Backspace)
+            {
+                typed.Length = Math.Max(0, typed.Length - 1);
+            }
+            else if (!char.IsControl(key.KeyChar))
+            {
+                typed.Append(key.KeyChar);
+            }
+        }
+        Console.WriteLine();
+        return typed.ToString();
+    }
+
     // ------------------------------------------------------------------
     // Дії
     // ------------------------------------------------------------------
 
-    private static void PackFiles(string archivePath, string[] paths, int blockSize)
+    /// <summary>pack &lt;archive&gt; [--volume-size N] файл... : розбирає параметри командного рядка.</summary>
+    private static void PackCommand(string[] args)
+    {
+        long volumeSize = 0;
+        var paths = new List<string>();
+        for (int i = 2; i < args.Length; i++)
+        {
+            if (args[i] == "--volume-size" && i + 1 < args.Length)
+            {
+                i++;
+                if (!long.TryParse(args[i], NumberStyles.None, CultureInfo.InvariantCulture, out volumeSize) || volumeSize <= 0)
+                {
+                    throw new ArgumentException("--volume-size має бути додатним цілим числом (байт).");
+                }
+            }
+            else
+            {
+                paths.Add(args[i]);
+            }
+        }
+        if (paths.Count == 0)
+        {
+            throw new ArgumentException("Не вказано жодного файлу для архіву.");
+        }
+        PackFiles(args[1], [.. paths], FormatConstants.DefaultBlockSize, volumeSize);
+    }
+
+    /// <summary>
+    /// Запаковує файли: аналізатор обирає стратегію для кожного, шум і стиснене йдуть як є, решта кодується LZ77 + Гаффманом.
+    /// Якщо задано розмір тому, блоки розкладає по томах ДП-рюкзак; томи називаються назва.partN.arc.
+    /// </summary>
+    private static void PackFiles(string archivePath, string[] paths, int blockSize, long volumeSize = 0)
     {
         var inputs = new List<ArchiveInput>();
         foreach (string path in paths)
@@ -263,22 +853,70 @@ internal static class ConsoleApp
             inputs.Add(new ArchiveInput(Path.GetFileName(path), File.ReadAllBytes(path)));
         }
 
-        byte[] archive = new ArchiveWriter(blockSize).Build(inputs);
         if (Directory.Exists(archivePath))
         {
             archivePath = Path.Combine(archivePath, "archive.arc");
         }
-        File.WriteAllBytes(archivePath, archive);
 
-        // Одразу читаємо назад і порівнюємо з оригіналом.
-        IReadOnlyList<ExtractedFile> restored = ArchiveReader.Read(archive);
-        bool identical = SameContent(inputs, restored);
+        // Повний тракт: аналіз → блоки → LZ77 → Гаффман → пакування → AES → HMAC → томи.
+        var options = new PackOptions(ReadPassword(confirm: true), new FileAnalyzer(), blockSize, volumeSize);
+        var history = new ArchiveOperation
+        {
+            StartedAtUtc = DateTime.UtcNow,
+            Operation = ArchiveOperationKind.Pack,
+            FileCount = inputs.Count,
+            OriginalBytes = inputs.Sum(i => (long)i.Data.Length),
+        };
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        IReadOnlyList<PreparedFile> prepared;
+        IReadOnlyList<byte[]> volumes;
+        try
+        {
+            prepared = ArchivePipeline.Prepare(inputs, options);
+            volumes = ArchivePipeline.Seal(prepared, options);
+        }
+        catch (ArchiveException ex)
+        {
+            RecordHistory(history, watch, ex.Code.ToString());
+            throw;
+        }
+        watch.Stop();
+        var outputs = new List<string>();
+        if (volumeSize > 0)
+        {
+            string stem = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(archivePath)) ?? ".", Path.GetFileNameWithoutExtension(archivePath));
+            string extension = Path.GetExtension(archivePath).Length == 0 ? ".arc" : Path.GetExtension(archivePath);
+            for (int i = 0; i < volumes.Count; i++)
+            {
+                outputs.Add($"{stem}.part{i + 1}{extension}");
+            }
+        }
+        else
+        {
+            outputs.Add(archivePath);
+        }
+        for (int i = 0; i < volumes.Count; i++)
+        {
+            File.WriteAllBytes(outputs[i], volumes[i]);
+        }
+
+        // Одразу читаємо назад (з перевіркою HMAC і CRC32) і порівнюємо з оригіналом.
+        ArchiveResult<IReadOnlyList<ExtractedFile>> check = ArchivePipeline.TryUnpack(volumes, options.Password);
+        bool identical = check.Ok && SameContent(inputs, check.Value!);
+        history.CompressedFiles = prepared.Count(f => f.Strategy == CompressionStrategy.Lz77Huffman);
+        history.ArchiveBytes = volumes.Sum(v => (long)v.Length);
+        history.VolumeCount = volumes.Count;
+        RecordHistory(history, watch, identical ? null : check.Error?.ToString() ?? "E_VERIFY");
 
         long originalSize = inputs.Sum(i => (long)i.Data.Length);
+        long archiveSize = volumes.Sum(v => (long)v.Length);
         Console.WriteLine();
-        Write($"[OK] Архів записано: {Path.GetFullPath(archivePath)}", ConsoleColor.Green);
-        PrintFileTable(restored, blockSize);
-        Console.WriteLine($"Вихідний розмір: {originalSize} байт, архів: {archive.Length} байт, службові дані: {archive.Length - originalSize} байт.");
+        foreach (string output in outputs)
+        {
+            Write($"[OK] Архів записано: {Path.GetFullPath(output)}", ConsoleColor.Green);
+        }
+        PrintPreparedTable(prepared);
+        Console.WriteLine($"Вихідний розмір: {originalSize} байт, архів (зашифрований): {archiveSize} байт у {volumes.Count} том(ах), різниця: {originalSize - archiveSize} байт.");
         if (identical)
         {
             Write("[OK] Перевірка: після читання назад усі файли збігаються побайтово.", ConsoleColor.Green);
@@ -289,50 +927,137 @@ internal static class ConsoleApp
         }
     }
 
-    private static void UnpackFile(string archivePath, string outputDir)
+    /// <summary>Що вирішив аналізатор для кожного файлу і скільки він займає після стиснення (без 15-байтових заголовків блоків).</summary>
+    private static void PrintPreparedTable(IReadOnlyList<PreparedFile> files)
     {
-        IReadOnlyList<ExtractedFile> files = ArchiveReader.Read(File.ReadAllBytes(archivePath));
-
-        // Імена вже перевірені читачем (без шляхів). Наявні файли не перезаписуємо.
-        foreach (ExtractedFile file in files)
+        Console.WriteLine($"  {"№",3}  {"Ім'я",-26} {"Розмір",10} {"Стиснено",10}  {"Тип",-17} {"Стратегія",-13} {"Блоків (як є / усього)"}");
+        for (int i = 0; i < files.Count; i++)
         {
-            if (File.Exists(Path.Combine(outputDir, file.Name)))
+            PreparedFile f = files[i];
+            int stored = f.Blocks.Count(b => b.IsStored);
+            Console.WriteLine($"  {i + 1,3}  {Fit(f.Name, 26),-26} {f.Size,10} {f.CodedSize,10}  {f.Kind,-17} {f.Strategy,-13} {stored} / {f.Blocks.Count}");
+        }
+        if (files.Count == 0)
+        {
+            Console.WriteLine("  (архів порожній)");
+        }
+    }
+
+    /// <summary>
+    /// Томи name.partN.arc: якщо вказано один з них, підхоплюються всі сусідні томи з тією самою назвою.
+    /// Звичайний файл читається як один том.
+    /// </summary>
+    private static List<byte[]> LoadVolumes(string archivePath)
+    {
+        if (!TryParsePartName(Path.GetFileName(archivePath), out string stem, out _, out string extension))
+        {
+            return [File.ReadAllBytes(archivePath)];
+        }
+
+        string directory = Path.GetDirectoryName(Path.GetFullPath(archivePath)) ?? ".";
+        var parts = new List<(int Number, string FullPath)>();
+        foreach (string candidate in Directory.GetFiles(directory))
+        {
+            if (TryParsePartName(Path.GetFileName(candidate), out string candidateStem, out int number, out string candidateExtension)
+                && string.Equals(candidateStem, stem, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(candidateExtension, extension, StringComparison.OrdinalIgnoreCase))
             {
-                throw new IOException($"Файл уже існує: {file.Name}. Оберіть іншу теку.");
+                parts.Add((number, candidate));
             }
         }
+        parts.Sort((a, b) => a.Number.CompareTo(b.Number));
+        return [.. parts.Select(p => File.ReadAllBytes(p.FullPath))];
+    }
 
-        Directory.CreateDirectory(outputDir);
-        foreach (ExtractedFile file in files)
+    private static bool TryParsePartName(string fileName, out string stem, out int number, out string extension)
+    {
+        stem = string.Empty;
+        number = 0;
+        extension = string.Empty;
+        int dot = fileName.LastIndexOf('.');
+        if (dot <= 0)
         {
-            File.WriteAllBytes(Path.Combine(outputDir, file.Name), file.Data);
+            return false;
         }
+
+        extension = fileName[dot..];
+        string withoutExtension = fileName[..dot];
+        int part = withoutExtension.LastIndexOf(".part", StringComparison.OrdinalIgnoreCase);
+        if (part < 0)
+        {
+            return false;
+        }
+
+        string digits = withoutExtension[(part + ".part".Length)..];
+        if (!int.TryParse(digits, NumberStyles.None, CultureInfo.InvariantCulture, out number))
+        {
+            return false;
+        }
+        stem = withoutExtension[..part];
+        return true;
+    }
+
+    private static void UnpackFile(string archivePath, string outputDir)
+    {
+        List<byte[]> volumes = LoadVolumes(archivePath);
+        string password = ReadPassword(confirm: false);
+        var history = new ArchiveOperation
+        {
+            StartedAtUtc = DateTime.UtcNow,
+            Operation = ArchiveOperationKind.Unpack,
+            ArchiveBytes = volumes.Sum(v => (long)v.Length),
+            VolumeCount = volumes.Count,
+        };
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        IReadOnlyList<ExtractedFile> files;
+        try
+        {
+            // Атомарно: або всі файли, або жодного; наявні файли не перезаписуються (див. ArchivePipeline.Extract).
+            files = ArchivePipeline.Extract(volumes, password, outputDir);
+        }
+        catch (ArchiveException ex)
+        {
+            RecordHistory(history, watch, ex.Code.ToString());
+            throw;
+        }
+        catch (IOException)
+        {
+            RecordHistory(history, watch, "E_IO");
+            throw;
+        }
+        history.FileCount = files.Count;
+        history.CompressedFiles = files.Count(f => f.Strategy == CompressionStrategy.Lz77Huffman);
+        history.OriginalBytes = files.Sum(f => (long)f.Data.Length);
+        RecordHistory(history, watch, errorCode: null);
 
         Console.WriteLine();
         Write($"[OK] Розпаковано {files.Count} файл(ів) у {Path.GetFullPath(outputDir)}", ConsoleColor.Green);
         PrintFileTable(files, 0);
-        Write("[OK] CRC32 кожного файлу збігається.", ConsoleColor.Green);
+        Write("[OK] HMAC і CRC32 кожного файлу збігаються.", ConsoleColor.Green);
     }
 
     private static void ShowInfo(string archivePath)
     {
-        byte[] bytes = File.ReadAllBytes(archivePath);
-        VolumeHeader header = VolumeHeader.Parse(bytes);
-        IReadOnlyList<ExtractedFile> files = ArchiveReader.Read(bytes);
+        List<byte[]> volumes = LoadVolumes(archivePath);
+        IReadOnlyList<ExtractedFile> files = ArchivePipeline.Unpack(volumes, ReadPassword(confirm: false));
 
-        Console.WriteLine();
-        Write("Заголовок тому (41 байт)", ConsoleColor.Cyan);
-        Console.WriteLine($"  Magic:            {Encoding.ASCII.GetString(FormatConstants.Magic)}");
-        Console.WriteLine($"  Версія формату:   {header.Version}");
-        Console.WriteLine($"  Том:              {header.VolumeNumber} з {header.VolumeCount}");
-        Console.WriteLine($"  Довжина payload:  {header.CiphertextLength} байт");
-        Console.WriteLine($"  Сіль:             {Convert.ToHexString(header.Salt)}");
-        Console.WriteLine($"  Nonce:            {Convert.ToHexString(header.Nonce)}");
-        Console.WriteLine($"  Розмір файлу:     {bytes.Length} байт");
+        foreach (byte[] bytes in volumes)
+        {
+            VolumeHeader header = VolumeHeader.Parse(bytes);
+            Console.WriteLine();
+            Write("Заголовок тому (41 байт)", ConsoleColor.Cyan);
+            Console.WriteLine($"  Magic:            {Encoding.ASCII.GetString(FormatConstants.Magic)}");
+            Console.WriteLine($"  Версія формату:   {header.Version}");
+            Console.WriteLine($"  Том:              volume_index {header.VolumeIndex} (з 0), усього {header.VolumeCount}");
+            Console.WriteLine($"  Довжина payload:  {header.CiphertextLength} байт");
+            Console.WriteLine($"  Сіль:             {Convert.ToHexString(header.Salt)}");
+            Console.WriteLine($"  Nonce:            {Convert.ToHexString(header.Nonce)}");
+            Console.WriteLine($"  Розмір файлу:     {bytes.Length} байт");
+        }
         Console.WriteLine();
         Write("Таблиця файлів", ConsoleColor.Cyan);
         PrintFileTable(files, 0);
-        Write("[OK] Структура коректна, CRC32 усіх файлів збігається.", ConsoleColor.Green);
+        Write("[OK] HMAC вірний, структура коректна, CRC32 усіх файлів збігається.", ConsoleColor.Green);
     }
 
     private static void ShowDatabase()
@@ -359,6 +1084,232 @@ internal static class ConsoleApp
     private static IMeasurementStore OpenMeasurementStore() =>
         MeasurementStore.Open(DatabaseSettings.ReadConnectionString(AppContext.BaseDirectory));
 
+    /// <summary>
+    /// Додає операцію в історію архівацій. Історія не повинна заважати самій архівації: без БД нічого не пишеться,
+    /// а недоступна БД дає лише попередження. Імен файлів, шляхів і пароля в історії немає.
+    /// </summary>
+    private static void RecordHistory(ArchiveOperation operation, System.Diagnostics.Stopwatch watch, string? errorCode)
+    {
+        operation.ElapsedSeconds = watch.Elapsed.TotalSeconds;
+        operation.Succeeded = errorCode is null;
+        operation.ErrorCode = errorCode;
+        try
+        {
+            IMeasurementStore store = OpenMeasurementStore();
+            if (store.IsEnabled)
+                store.SaveArchiveOperation(operation);
+        }
+        catch (DatabaseException ex)
+        {
+            Write($"[УВАГА] Операцію не записано в історію: {ex.Message}", ConsoleColor.Yellow);
+        }
+    }
+
+    private static int HistoryCount(string text) =>
+        int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out int count) && count > 0
+            ? count
+            : throw new ArgumentException($"Кількість має бути додатним цілим числом: {text}");
+
+    /// <summary>Останні операції з історії архівацій, найновіші зверху.</summary>
+    private static void ShowHistory(int count)
+    {
+        IMeasurementStore store = OpenMeasurementStore();
+        if (!store.IsEnabled)
+        {
+            Write("База даних вимкнена: історія архівацій зберігається лише в ній.", ConsoleColor.Yellow);
+            return;
+        }
+
+        IReadOnlyList<ArchiveOperation> operations = store.ListArchiveOperations(count);
+        Console.WriteLine();
+        Write($"Історія архівацій (останні {operations.Count})", ConsoleColor.Cyan);
+        Console.WriteLine($"  {"Час (UTC)",-19}  {"Операція",-8} {"Файлів",6} {"Стиснено",8} {"Розмір",12} {"Архів",12} {"Томів",5} {"Час, с",8}  Результат");
+        foreach (ArchiveOperation o in operations)
+        {
+            string result = o.Succeeded ? "OK" : o.ErrorCode!;
+            Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
+                $"  {o.StartedAtUtc:yyyy-MM-dd HH:mm:ss}  {o.Operation,-8} {o.FileCount,6} {o.CompressedFiles,8} {o.OriginalBytes,12} {o.ArchiveBytes,12} {o.VolumeCount,5} {o.ElapsedSeconds,8:F3}  {result}"));
+        }
+        if (operations.Count == 0)
+            Console.WriteLine("  (порожньо)");
+    }
+
+    /// <summary>
+    /// Runs the basic three-gene GA and its equal-budget random baseline. With
+    /// the optional full argument it also searches the advanced chromosome,
+    /// compares local search and prints the S/T Pareto front.
+    /// </summary>
+    private static void RunGeneticExperiment(string datasetPath, string? configPath, bool full)
+    {
+        CultureInfo c = CultureInfo.InvariantCulture;
+        TeamConfig config = configPath is null
+            ? new TeamConfig(DefaultMeasureVolumeBytes, PackingPriorities.Default)
+            : TeamConfig.Load(configPath);
+        (List<ArchiveInput> inputs, List<byte> groups) = LoadCorpus(datasetPath);
+        var corpus = inputs.Select((input, index) => (input, groups[index])).ToList();
+        var baseOptions = new PackOptions(
+            MeasurementPassword,
+            new FileAnalyzer(),
+            MaxVolumeBytes: config.MaxVolumeBytes,
+            Priorities: config.Priorities);
+        var evaluator = new CorpusFitnessEvaluator(new CorpusFitnessSettings(
+            corpus,
+            baseOptions,
+            config.Alpha,
+            config.Beta,
+            config.TRefSeconds));
+
+        Console.WriteLine();
+        Write($"Оптимізація повного тракту Q: {(full ? "повна хромосома" : "3 гени")}, {corpus.Count} файлів", ConsoleColor.Cyan);
+
+        var experiment = new Experiment
+        {
+            Kind = ExperimentKind.Genetic,
+            StartedAtUtc = DateTime.UtcNow,
+            CommitHash = GitCommit(),
+            Seed = 2026,
+            Dataset = DatasetName(datasetPath),
+            ParametersJson = JsonSerializer.Serialize(new
+            {
+                chromosome = full ? "full" : "basic",
+                genes = full
+                    ? "window, min_match, abandon_threshold, search_depth, huffman_block_size, history_k, perceptron_architecture, strategy_flags"
+                    : "window, min_match, abandon_threshold",
+                population = full ? 6 : 8,
+                generations = full ? 4 : 5,
+                alpha = config.Alpha,
+                beta = config.Beta,
+                tRefSeconds = config.TRefSeconds,
+                maxVolumeBytes = config.MaxVolumeBytes,
+                fitness = "full ArchivePipeline Q: compression S and speed T, Q = alpha*S + beta*T",
+                d1Case = "D1 #17",
+            }),
+        };
+
+        if (full)
+        {
+            var space = new FullChromosomeSpace();
+            var budget = new GeneticSearchOptions(PopulationSize: 6, Generations: 4, EliteCount: 2, TournamentSize: 3, Seed: 2026);
+            SearchRun<FullChromosome> genetic = new GeneticAlgorithm<FullChromosome>(space, evaluator).Run(budget);
+            SearchRun<FullChromosome> random = new RandomSearch<FullChromosome>(space, evaluator).Run(budget, seed: 2027);
+            SearchRun<FullChromosome> local = new LocalSearch<FullChromosome>(space, evaluator).Run(
+                genetic.BestChromosome,
+                new LocalSearchOptions(MaxEvaluations: 40, Seed: 2028));
+            AddGeneticRows(experiment, genetic, full);
+            AddGeneticRows(experiment, random, full);
+            AddGeneticRows(experiment, local, full);
+            PrintOptimizationSummary(genetic, random, local, c);
+        }
+        else
+        {
+            var space = new BasicChromosomeSpace();
+            var budget = new GeneticSearchOptions(PopulationSize: 8, Generations: 5, EliteCount: 2, TournamentSize: 3, Seed: 2026);
+            SearchRun<BasicChromosome> genetic = new GeneticAlgorithm<BasicChromosome>(space, evaluator).Run(budget);
+            SearchRun<BasicChromosome> random = new RandomSearch<BasicChromosome>(space, evaluator).Run(budget, seed: 2027);
+            AddGeneticRows(experiment, genetic, full: false);
+            AddGeneticRows(experiment, random, full: false);
+            PrintOptimizationSummary(genetic, random, local: null, c);
+        }
+
+        IReadOnlyList<ParetoRow> pareto = ReportTables.ParetoFront(experiment);
+        Console.WriteLine();
+        Console.WriteLine($"Фронт Парето (max S і max T): {pareto.Count} хромосом");
+        foreach (ParetoRow row in pareto)
+        {
+            Console.WriteLine(string.Format(c, "  {0,-11} gen {1,2}, ind {2,2}: S={3:F4}, T={4:F4}, Q={5:F4}",
+                row.Algorithm, row.Generation, row.Individual, row.S, row.T, row.Fitness));
+        }
+
+        IMeasurementStore store = OpenMeasurementStore();
+        if (store.IsEnabled)
+        {
+            store.SaveExperiment(experiment);
+            Write($"[OK] {experiment.GeneticIndividuals.Count} оцінених хромосом записано в БД (експеримент №{experiment.Id}).", ConsoleColor.Green);
+        }
+        else
+        {
+            Write("[УВАГА] База даних вимкнена: журнал показано лише в консолі.", ConsoleColor.Yellow);
+        }
+    }
+
+    private static void AddGeneticRows<T>(Experiment experiment, SearchRun<T> run, bool full)
+    {
+        foreach (EvaluatedCandidate<T> row in run.Evaluations)
+        {
+            string genes = full
+                ? ChromosomeJson.Serialize((FullChromosome)(object)row.Chromosome!)
+                : ChromosomeJson.Serialize((BasicChromosome)(object)row.Chromosome!);
+            experiment.GeneticIndividuals.Add(new GeneticIndividual
+            {
+                Algorithm = row.Algorithm switch
+                {
+                    SearchMethod.Genetic => SearchAlgorithm.Genetic,
+                    SearchMethod.Random => SearchAlgorithm.Random,
+                    SearchMethod.LocalSearch => SearchAlgorithm.LocalSearch,
+                    _ => throw new InvalidOperationException($"Невідомий метод пошуку: {row.Algorithm}."),
+                },
+                Generation = row.Generation,
+                Individual = row.Individual,
+                GenesJson = genes,
+                Fitness = row.Result.Fitness,
+                S = row.Result.Compression,
+                T = row.Result.Speed,
+            });
+        }
+    }
+
+    private static void PrintOptimizationSummary<T>(
+        SearchRun<T> genetic,
+        SearchRun<T> random,
+        SearchRun<T>? local,
+        CultureInfo culture)
+    {
+        Console.WriteLine(string.Format(culture,
+            "  GA: evaluations {0}, initial best Q={1:F4}, final generation Q={2:F4}, best Q={3:F4}",
+            genetic.FitnessEvaluations, genetic.InitialGenerationBest, genetic.FinalGenerationBest, genetic.BestResult.Fitness));
+        Console.WriteLine(string.Format(culture,
+            "  Random: evaluations {0}, initial best Q={1:F4}, final generation Q={2:F4}, best Q={3:F4}",
+            random.FitnessEvaluations, random.InitialGenerationBest, random.FinalGenerationBest, random.BestResult.Fitness));
+        if (genetic.FitnessEvaluations == random.FitnessEvaluations)
+            Write("[OK] GA і випадковий пошук мають однакову кількість обчислень пристосованості.", ConsoleColor.Green);
+        else
+            Write("[ПОМИЛКА] Бюджети GA і випадкового пошуку різні.", ConsoleColor.Red);
+        if (genetic.FinalGenerationBest + 1e-12 >= genetic.InitialGenerationBest)
+            Write("[OK] Найкраще Q останнього покоління не гірше за нульове (елітність).", ConsoleColor.Green);
+        else
+            Write("[ПОПЕРЕДЖЕННЯ] Умова монотонності Q не виконана.", ConsoleColor.Yellow);
+        if (local is not null)
+            Console.WriteLine(string.Format(culture, "  Local search: evaluations {0}, best Q={1:F4}", local.FitnessEvaluations, local.BestResult.Fitness));
+    }
+
+    /// <summary>Журнал еволюції ГА (усі хромосоми й пристосованість) з БД у CSV, який зберігається в репозиторії.</summary>
+    private static int ExportGeneticJournal(string experimentId, string csvPath)
+    {
+        if (!int.TryParse(experimentId, NumberStyles.None, CultureInfo.InvariantCulture, out int id))
+        {
+            Write($"[ПОМИЛКА] Номер експерименту має бути цілим числом: {experimentId}", ConsoleColor.Red);
+            return 1;
+        }
+        IMeasurementStore store = OpenMeasurementStore();
+        if (!store.IsEnabled)
+        {
+            Write("База даних вимкнена: журнал ГА зберігається лише в ній.", ConsoleColor.Yellow);
+            return 1;
+        }
+
+        Experiment? experiment = store.GetExperiment(id);
+        if (experiment is not { Kind: ExperimentKind.Genetic })
+        {
+            Write($"[ПОМИЛКА] Експерименту ГА з номером {id} немає в базі.", ConsoleColor.Red);
+            return 1;
+        }
+
+        using (var writer = new StreamWriter(csvPath, append: false, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false)))
+            GeneticJournalCsv.Write(experiment.GeneticIndividuals, writer);
+        Write($"[OK] {experiment.GeneticIndividuals.Count} хромосом записано в {Path.GetFullPath(csvPath)}", ConsoleColor.Green);
+        return 0;
+    }
+
     /// <summary>Показує ознаки, за якими класифікатор розрізнятиме типи файлів.</summary>
     private static void AnalyzeFile(string path)
     {
@@ -383,6 +1334,942 @@ internal static class ConsoleApp
 
         string lags = string.Join(" ", f.Autocorrelation.Select(r => r.ToString("+0.00;-0.00; 0.00", c)));
         Console.WriteLine($"  Автокореляція, лаги 1-16: {lags}");
+
+        FileAnalysis analysis = new FileAnalyzer().Analyze(data);
+        Console.WriteLine(string.Format(c, "  Тип за класифікатором:    {0} = {1}, впевненість {2:P0}", (byte)analysis.Kind, KindName(analysis.Kind), analysis.Confidence));
+        Console.WriteLine($"  Стратегія стиснення:      {StrategyName(analysis.Strategy)}");
+    }
+
+    private static string KindName(FileKind kind) => kind switch
+    {
+        FileKind.Text => "природний текст",
+        FileKind.SourceCode => "вихідний код",
+        FileKind.Structured => "структуровані дані",
+        FileKind.Raster => "растр без стиснення",
+        FileKind.Executable => "виконуваний файл",
+        FileKind.AlreadyCompressed => "вже стиснуте",
+        FileKind.Artificial => "штучні дані",
+        _ => "невідомо",
+    };
+
+    private static string StrategyName(CompressionStrategy strategy) => strategy switch
+    {
+        CompressionStrategy.NoCompression => "без стиснення (зберігається як є)",
+        CompressionStrategy.Lz77Huffman => "LZ77 + Гаффман",
+        _ => strategy.ToString(),
+    };
+
+    private static void StrategyExperimentInteractive()
+    {
+        string? dataset = Prompt("Каталог із групами 0..6", "Datasets");
+        if (dataset is null)
+            return;
+        RunStrategyExperiment(dataset);
+    }
+
+    /// <summary>
+    /// Пакує кожну групу датасету в архів трьома способами (без стиснення, завжди LZ77 + Гаффман,
+    /// як вирішить класифікатор), розпаковує, порівнює й пише розміри та час у базу.
+    /// </summary>
+    /// <summary>
+    /// Q кожної групи через повний тракт (аналіз, LZ77, Гаффман, пакування, AES, HMAC) двічі: з файлами як є
+    /// і із залишками прогнозу. Час прогнозу й відновлення байтів входить у T.
+    /// </summary>
+    private static void RunPredictionQ(string datasetPath, string? configPath)
+    {
+        CultureInfo c = CultureInfo.InvariantCulture;
+        TeamConfig config = configPath is null
+            ? new TeamConfig(DefaultMeasureVolumeBytes, PackingPriorities.Default)
+            : TeamConfig.Load(configPath);
+        (List<ArchiveInput> inputs, List<byte> groups) = LoadCorpus(datasetPath);
+        IReadOnlyList<GroupedFile> files = [.. inputs.Select((input, i) => new GroupedFile(groups[i], input))];
+        var options = new PackOptions(MeasurementPassword, new FileAnalyzer(), MaxVolumeBytes: config.MaxVolumeBytes, Priorities: config.Priorities);
+        BytePredictor predictor = BytePredictor.BuiltIn;
+        const int repeats = 3;
+
+        Console.WriteLine();
+        Write($"Q з прогнозом (модель {predictor.ModelId:X16}) і без: {files.Count} файлів, повний тракт на кожну групу", ConsoleColor.Cyan);
+        DateTime started = DateTime.UtcNow;
+        IReadOnlyList<PredictionQMeasurement> results = PredictionQComparison.Run(
+            files, predictor, options, config.Alpha, config.Beta, config.TRefSeconds, repeats);
+
+        Console.WriteLine($"  {"Група",5} {"Файлів",6} {"Було, Б",9} {"Архів, Б",9} {"з прогн., Б",11} {"Час, с",7} {"з прогн., с",11} {"Q",7} {"Q з прогн.",10} {"ΔQ",8}");
+        foreach (IGrouping<int, PredictionQMeasurement> group in results.GroupBy(r => r.Group))
+        {
+            PredictionQMeasurement plain = group.Single(r => !r.Predicted), predicted = group.Single(r => r.Predicted);
+            Console.WriteLine(string.Format(c, "  {0,5} {1,6} {2,9} {3,9} {4,11} {5,7:F3} {6,11:F3} {7,7:F4} {8,10:F4} {9,8:+0.0000;-0.0000;0}",
+                group.Key, plain.FileCount, plain.OriginalBytes, plain.ArchiveBytes, predicted.ArchiveBytes,
+                plain.Seconds, predicted.Seconds, plain.Score.Q, predicted.Score.Q, predicted.Score.Q - plain.Score.Q));
+        }
+        Console.WriteLine(string.Format(c, "  α = {0}, β = {1}, t_ref = {2} с; час: медіана з {3} прогонів після розігріву",
+            config.Alpha, config.Beta, config.TRefSeconds, repeats));
+        if (configPath is null)
+            Write("  [УВАГА] α, β, t_ref і місткість тому стандартні (заглушка): справжні задає team_config.json.", ConsoleColor.Yellow);
+        if (results.All(r => r.AllRestored))
+            Write("[OK] Усі файли відновлено побайтово в обох варіантах.", ConsoleColor.Green);
+        else
+            Write("[ПОМИЛКА] Не всі файли відновлено: Q таких груп дорівнює 0.", ConsoleColor.Red);
+
+        var experiment = new Experiment
+        {
+            Kind = ExperimentKind.PredictionQ,
+            StartedAtUtc = started,
+            CommitHash = GitCommit(),
+            Dataset = DatasetName(datasetPath),
+            ParametersJson = JsonSerializer.Serialize(new
+            {
+                model = predictor.ModelId.ToString("X16", c),
+                contextBytes = predictor.ContextBytes,
+                alpha = config.Alpha,
+                beta = config.Beta,
+                tRefSeconds = config.TRefSeconds,
+                maxVolumeBytes = config.MaxVolumeBytes,
+                config = configPath is null ? "defaults (placeholder)" : Path.GetFileName(configPath),
+                repeats,
+                pipeline = "analysis on residuals, LZ77 + Huffman, DP knapsack, AES-256-CTR + HMAC-SHA256",
+            }),
+        };
+        foreach (PredictionQMeasurement r in results)
+        {
+            experiment.PredictionQResults.Add(new PredictionQResult
+            {
+                Group = (byte)r.Group,
+                Predicted = r.Predicted,
+                FileCount = r.FileCount,
+                OriginalBytes = r.OriginalBytes,
+                ArchiveBytes = r.ArchiveBytes,
+                ElapsedSeconds = r.Seconds,
+                AllRestored = r.AllRestored,
+                S = r.Score.S,
+                T = r.Score.T,
+                Q = r.Score.Q,
+            });
+        }
+
+        IMeasurementStore store = OpenMeasurementStore();
+        if (store.IsEnabled)
+        {
+            store.SaveExperiment(experiment);
+            Write($"[OK] Результати збережено в базі даних (експеримент №{experiment.Id}).", ConsoleColor.Green);
+        }
+        else
+        {
+            Write("[УВАГА] База даних вимкнена: результати виведено лише в консоль.", ConsoleColor.Yellow);
+        }
+    }
+
+    /// <summary>
+    /// Два набори: файли датасету як є і ті самі файли з вбудованими стисненими даними (файл групи 5 у середині,
+    /// як картинка в документі). Другий набір показує, що дає стратегія по блоках на змішаних файлах.
+    /// </summary>
+    /// <summary>
+    /// Розмір тому для таблиці «вплив кожного блоку»: стиснений корпус займає кілька томів, тож пакуванню є що вибирати,
+    /// а нестиснений блок на 64 КіБ разом із записом блоку ще вміщується в том.
+    /// </summary>
+    private const long BlockImpactVolumeBytes = 131_072;
+
+    /// <summary>
+    /// Таблиця звіту «вплив кожного блоку»: весь корпус через тракт з вимкненим по черзі блоком
+    /// (аналіз, LZ77, стиснення, ДП-пакування, шифрування), Q кожного варіанта і зміна відносно повного тракту.
+    /// </summary>
+    private static void RunBlockImpact(string datasetPath, string? configPath)
+    {
+        CultureInfo c = CultureInfo.InvariantCulture;
+        TeamConfig config = configPath is null
+            ? new TeamConfig(BlockImpactVolumeBytes, PackingPriorities.Default)
+            : TeamConfig.Load(configPath);
+        (List<ArchiveInput> inputs, List<byte> groups) = LoadCorpus(datasetPath);
+        IReadOnlyList<GroupedFile> corpus = [.. inputs.Select((input, i) => new GroupedFile(groups[i], input))];
+        var options = new PackOptions(MeasurementPassword, new FileAnalyzer(), MaxVolumeBytes: config.MaxVolumeBytes, Priorities: config.Priorities);
+        const int repeats = 5;
+
+        Console.WriteLine();
+        Write($"Вплив кожного блоку тракту на Q: {corpus.Count} файлів, том {config.MaxVolumeBytes} байт", ConsoleColor.Cyan);
+        DateTime started = DateTime.UtcNow;
+        IReadOnlyList<BlockImpactMeasurement> results = BlockImpactComparison.Run(
+            corpus, options, config.Alpha, config.Beta, config.TRefSeconds, repeats);
+        double baseline = results.Single(r => r.DisabledStage == PipelineStage.None).Score.Q;
+
+        Console.WriteLine($"  {"Вимкнено",-12} {"Архів, Б",10} {"Томів",6} {"Час, с",8} {"S",7} {"T",7} {"Q",7} {"ΔQ",8} {"Відновлено",11}");
+        foreach (BlockImpactMeasurement r in results)
+        {
+            Console.WriteLine(string.Format(c, "  {0,-12} {1,10} {2,6} {3,8:F3} {4,7:F4} {5,7:F4} {6,7:F4} {7,8:+0.0000;-0.0000;0} {8,11}",
+                StageName(r.DisabledStage), r.ArchiveBytes, r.Volumes, r.Seconds, r.Score.S, r.Score.T, r.Score.Q,
+                r.Score.Q - baseline, r.AllRestored ? "так" : "НІ"));
+        }
+        Console.WriteLine(string.Format(c, "  α = {0}, β = {1}, t_ref = {2} с; час: медіана з {3} прогонів після розігріву",
+            config.Alpha, config.Beta, config.TRefSeconds, repeats));
+        if (configPath is null)
+            Write("  [УВАГА] α, β, t_ref і пріоритети стандартні (заглушка): справжні задає team_config.json.", ConsoleColor.Yellow);
+
+        var experiment = new Experiment
+        {
+            Kind = ExperimentKind.BlockImpact,
+            StartedAtUtc = started,
+            CommitHash = GitCommit(),
+            Dataset = DatasetName(datasetPath),
+            ParametersJson = JsonSerializer.Serialize(new
+            {
+                alpha = config.Alpha,
+                beta = config.Beta,
+                tRefSeconds = config.TRefSeconds,
+                maxVolumeBytes = config.MaxVolumeBytes,
+                config = configPath is null ? "defaults (placeholder)" : Path.GetFileName(configPath),
+                repeats,
+                notMeasured = "Huffman alone (the format requires Huffman tables), Prediction (not part of the pipeline)",
+            }),
+        };
+        foreach (BlockImpactMeasurement r in results)
+        {
+            experiment.BlockImpactResults.Add(new BlockImpactResult
+            {
+                DisabledBlock = Enum.Parse<PipelineBlock>(r.DisabledStage.ToString()),
+                OriginalBytes = r.OriginalBytes,
+                ArchiveBytes = r.ArchiveBytes,
+                ElapsedSeconds = r.Seconds,
+                AllRestored = r.AllRestored,
+                S = r.Score.S,
+                T = r.Score.T,
+                Q = r.Score.Q,
+            });
+        }
+        SaveExperimentIfEnabled(experiment);
+    }
+
+    private static string StageName(PipelineStage stage) => stage switch
+    {
+        PipelineStage.None => "нічого",
+        PipelineStage.Analysis => "аналіз",
+        PipelineStage.Lz77 => "LZ77",
+        PipelineStage.Compression => "стиснення",
+        PipelineStage.Packing => "ДП-пакування",
+        PipelineStage.Encryption => "шифрування",
+        _ => stage.ToString(),
+    };
+
+    /// <summary>Таблиця звіту «стиснути → зашифрувати» проти зворотного порядку, по файлах і разом по групах.</summary>
+    private static void RunEncryptionOrder(string datasetPath)
+    {
+        CultureInfo c = CultureInfo.InvariantCulture;
+        IReadOnlyList<GroupedFile> files = [.. LabeledDataset.ListFiles(datasetPath)
+            .Select(f => new GroupedFile(f.Label, new ArchiveInput(Path.GetFileName(f.FullPath), File.ReadAllBytes(f.FullPath))))];
+
+        Console.WriteLine();
+        Write($"«Стиснути → зашифрувати» проти зворотного порядку: {files.Count} файлів, LZ77 + Гаффман, AES-256-CTR", ConsoleColor.Cyan);
+        IReadOnlyList<EncryptionOrderMeasurement> results = EncryptionOrderComparison.Run(files);
+
+        Console.WriteLine($"  {"Група",5} {"Було, Б",9} {"Стиснути→зашифр., Б",20} {"Зашифр.→стиснути, Б",20} {"без збереження як є, Б",23} {"Коеф. 1",8} {"Коеф. 2",8}");
+        foreach (IGrouping<int, EncryptionOrderMeasurement> group in results.GroupBy(r => r.Group).OrderBy(g => g.Key))
+        {
+            long original = group.Sum(r => r.OriginalBytes), first = group.Sum(r => r.CompressThenEncryptBytes);
+            long second = group.Sum(r => r.EncryptThenCompressBytes), coded = group.Sum(r => r.EncryptThenCompressCodedBytes);
+            Console.WriteLine(string.Format(c, "  {0,5} {1,9} {2,20} {3,20} {4,23} {5,8:F2} {6,8:F2}",
+                group.Key, original, first, second, coded, (double)original / first, (double)original / second));
+        }
+        if (results.All(r => r.BothRestored))
+            Write("[OK] Обидва порядки відновлюють кожен файл побайтово.", ConsoleColor.Green);
+        else
+            Write("[ПОМИЛКА] Не всі файли відновлено.", ConsoleColor.Red);
+
+        var experiment = new Experiment
+        {
+            Kind = ExperimentKind.EncryptionOrder,
+            StartedAtUtc = DateTime.UtcNow,
+            CommitHash = GitCommit(),
+            Dataset = DatasetName(datasetPath),
+            ParametersJson = JsonSerializer.Serialize(new
+            {
+                blockSize = FormatConstants.DefaultBlockSize,
+                parseMode = "Lazy",
+                cipher = "AES-256-CTR, random key and nonce",
+                size = "block data only; blocks without gain stored as they are",
+            }),
+        };
+        foreach (EncryptionOrderMeasurement r in results)
+        {
+            experiment.EncryptionOrderResults.Add(new EncryptionOrderResult
+            {
+                Group = (byte)r.Group,
+                OriginalBytes = r.OriginalBytes,
+                CompressThenEncryptBytes = r.CompressThenEncryptBytes,
+                EncryptThenCompressBytes = r.EncryptThenCompressBytes,
+            });
+        }
+        SaveExperimentIfEnabled(experiment);
+    }
+
+    private static void SaveExperimentIfEnabled(Experiment experiment)
+    {
+        IMeasurementStore store = OpenMeasurementStore();
+        if (store.IsEnabled)
+        {
+            store.SaveExperiment(experiment);
+            Write($"[OK] Результати збережено в базі даних (експеримент №{experiment.Id}).", ConsoleColor.Green);
+        }
+        else
+        {
+            Write("[УВАГА] База даних вимкнена: результати виведено лише в консоль.", ConsoleColor.Yellow);
+        }
+    }
+
+    private static void RunStrategyExperiment(string datasetPath)
+    {
+        IReadOnlyList<GroupedFile> files = [.. LabeledDataset.ListFiles(datasetPath)
+            .Select(f => new GroupedFile(f.Label, new ArchiveInput(Path.GetFileName(f.FullPath), File.ReadAllBytes(f.FullPath))))];
+        RunStrategySet(files, DatasetName(datasetPath), "files as they are");
+
+        GroupedFile[] pictures = [.. files.Where(f => f.Group == (int)FileKind.AlreadyCompressed)];
+        if (pictures.Length == 0)
+            return;
+        GroupedFile[] hosts = [.. files.Where(f => f.Group != (int)FileKind.AlreadyCompressed)];
+        IReadOnlyList<GroupedFile> embedded = [.. hosts.Select((host, i) =>
+        {
+            byte[] data = host.File.Data, picture = pictures[i % pictures.Length].File.Data;
+            int middle = data.Length / 2;
+            return host with { File = host.File with { Data = [.. data.AsSpan(0, middle), .. picture, .. data.AsSpan(middle)] } };
+        })];
+        RunStrategySet(embedded, DatasetName(datasetPath) + " + embedded",
+            "files of groups 0-4 and 6 with a group 5 file inserted in the middle, like a picture in a document");
+    }
+
+    private static void RunStrategySet(IReadOnlyList<GroupedFile> files, string dataset, string description)
+    {
+        CultureInfo c = CultureInfo.InvariantCulture;
+        Console.WriteLine();
+        Write($"Фіксована стратегія проти класифікатора: {files.Count} файлів ({description}), архів на кожну групу", ConsoleColor.Cyan);
+        IReadOnlyList<StrategyMeasurement> results = StrategyComparison.Run(files, new FileAnalyzer());
+
+        Console.WriteLine($"  {"Група",5} {"Варіант",-12} {"Стиснуто",9} {"Було, Б",9} {"Архів, Б",9} {"Запак., с",10} {"Розпак., с",11} {"Відновлено",11}");
+        foreach (StrategyMeasurement r in results)
+        {
+            Console.WriteLine(string.Format(c, "  {0,5} {1,-12} {2,4} з {3,-2} {4,9} {5,9} {6,10:F3} {7,11:F3} {8,11}",
+                r.Group, VariantName(r.Variant), r.CompressedFiles, r.FileCount, r.OriginalBytes, r.ArchiveBytes,
+                r.PackSeconds, r.UnpackSeconds, r.AllRestored ? "так" : "НІ"));
+        }
+
+        Console.WriteLine();
+        foreach (ArchiveVariant variant in Enum.GetValues<ArchiveVariant>())
+        {
+            StrategyMeasurement[] rows = [.. results.Where(r => r.Variant == variant)];
+            Console.WriteLine(string.Format(c, "  Разом {0,-12} архів {1,9} Б, запакування {2,7:F3} с, розпакування {3,7:F3} с",
+                VariantName(variant), rows.Sum(r => r.ArchiveBytes), rows.Sum(r => r.PackSeconds), rows.Sum(r => r.UnpackSeconds)));
+        }
+        if (results.All(r => r.AllRestored))
+            Write("[OK] Усі файли відновлено побайтово в усіх варіантах.", ConsoleColor.Green);
+        else
+            Write("[ПОМИЛКА] Не всі файли відновлено побайтово.", ConsoleColor.Red);
+
+        var experiment = new Experiment
+        {
+            Kind = ExperimentKind.Strategy,
+            StartedAtUtc = DateTime.UtcNow,
+            CommitHash = GitCommit(),
+            Dataset = dataset,
+            ParametersJson = JsonSerializer.Serialize(new
+            {
+                files = description,
+                blockSize = FormatConstants.DefaultBlockSize,
+                parseMode = "Lazy",
+                archive = "one single-volume archive per group, unencrypted",
+                classifier = "built-in model; trained on two of three files of each group",
+            }),
+        };
+        foreach (StrategyMeasurement r in results)
+        {
+            experiment.StrategyResults.Add(new StrategyResult
+            {
+                Group = (byte)r.Group,
+                Variant = Enum.Parse<DataVariant>(r.Variant.ToString()),
+                FileCount = r.FileCount,
+                CompressedFiles = r.CompressedFiles,
+                OriginalBytes = r.OriginalBytes,
+                ArchiveBytes = r.ArchiveBytes,
+                PackSeconds = r.PackSeconds,
+                UnpackSeconds = r.UnpackSeconds,
+                AllRestored = r.AllRestored,
+            });
+        }
+
+        IMeasurementStore store = OpenMeasurementStore();
+        if (store.IsEnabled)
+        {
+            store.SaveExperiment(experiment);
+            Write($"[OK] Результати збережено в базі даних (експеримент №{experiment.Id}).", ConsoleColor.Green);
+        }
+        else
+        {
+            Write("[УВАГА] База даних вимкнена: результати виведено лише в консоль.", ConsoleColor.Yellow);
+        }
+    }
+
+    private static string VariantName(ArchiveVariant variant) => variant switch
+    {
+        ArchiveVariant.Stored => "без стиснення",
+        ArchiveVariant.Fixed => "фіксована",
+        ArchiveVariant.Classifier => "класифікатор",
+        ArchiveVariant.ClassifierPerBlock => "по блоках",
+        _ => variant.ToString(),
+    };
+
+    private static void PredictionExperimentInteractive()
+    {
+        string? dataset = Prompt("Каталог із групами 0..6", "Datasets");
+        if (dataset is null)
+            return;
+        RunPredictionExperiment(dataset);
+    }
+
+    /// <summary>Навчає передбачення наступного байта на train-файлах датасету і зберігає модель.</summary>
+    private static void TrainPredictor(string datasetPath, string modelPath)
+    {
+        (IReadOnlyList<LabeledFile> train, _) = LabeledDataset.SplitFiles(LabeledDataset.ListFiles(datasetPath));
+        PredictorOptions options = PredictorOptions.Default;
+
+        Console.WriteLine();
+        Write($"Навчання передбачення: {train.Count} файлів, до {options.MaxPositionsPerSample} позицій з кожного", ConsoleColor.Cyan);
+        Console.WriteLine($"  Контекст {options.ContextBytes} байти, мережа {256 * options.ContextBytes}-{options.HiddenNeurons}-256 (softsign), епох {options.Epochs}, швидкість {options.LearningRate.ToString(CultureInfo.InvariantCulture)}, seed {options.Seed}");
+
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        BytePredictor predictor = BytePredictor.Train([.. train.Select(f => (ReadOnlyMemory<byte>)File.ReadAllBytes(f.FullPath))], options);
+        using (FileStream file = File.Create(modelPath))
+            predictor.Save(file);
+
+        Write($"[OK] Модель {predictor.ModelId:X16} збережено за {watch.Elapsed.TotalSeconds:F1} с: {Path.GetFullPath(modelPath)}", ConsoleColor.Green);
+    }
+
+    /// <summary>
+    /// Для кожного valid-файлу (на них модель не навчалася) порівнює ентропію і розмір після LZ77 + Гаффмана
+    /// для самого файлу та для залишків передбачення, перевіряє відновлення і пише результати в базу.
+    /// </summary>
+    private static void RunPredictionExperiment(string datasetPath)
+    {
+        CultureInfo c = CultureInfo.InvariantCulture;
+        (_, IReadOnlyList<LabeledFile> valid) = LabeledDataset.SplitFiles(LabeledDataset.ListFiles(datasetPath));
+        BytePredictor predictor = BytePredictor.BuiltIn;
+        var experiment = new Experiment
+        {
+            Kind = ExperimentKind.Prediction,
+            StartedAtUtc = DateTime.UtcNow,
+            Dataset = Path.GetFullPath(datasetPath),
+            ParametersJson = JsonSerializer.Serialize(new
+            {
+                model = predictor.ModelId.ToString("X16", c),
+                contextBytes = predictor.ContextBytes,
+                layers = string.Join("-", predictor.Network.LayerSizes),
+                files = "valid files: every third file of each group, not used for training",
+                encoder = "LZ77 greedy + Huffman, 64 KB blocks, stored blocks allowed",
+            }),
+        };
+
+        Console.WriteLine();
+        Write($"Вплив передбачення (модель {predictor.ModelId:X16}) на файлах, яких модель не бачила", ConsoleColor.Cyan);
+        Console.WriteLine($"  {"Група",5} {"Файл",-24} {"Байтів",8} {"H файлу",8} {"H залишків",11} {"LZ77 файлу",11} {"LZ77 залишків",14} {"Час, с",7}");
+        foreach (LabeledFile file in valid)
+        {
+            byte[] data = File.ReadAllBytes(file.FullPath);
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            byte[] encoded = predictor.Encode(data);
+            double seconds = watch.Elapsed.TotalSeconds;
+            if (!predictor.Decode(encoded).AsSpan().SequenceEqual(data))
+                throw new InvalidOperationException($"Передбачення не відновило {file.Source} побайтово.");
+
+            byte[] residuals = encoded[BytePredictor.ModelIdSize..];
+            var result = new PredictionResult
+            {
+                Group = (byte)file.Label,
+                OriginalBytes = data.Length,
+                OriginalEntropy = FeatureExtractor.Compute(data).Entropy,
+                ResidualEntropy = FeatureExtractor.Compute(residuals).Entropy,
+                EncodedBytes = EncodedSize(data),
+                PredictedEncodedBytes = EncodedSize(encoded),
+                ElapsedSeconds = seconds,
+            };
+            experiment.PredictionResults.Add(result);
+            Console.WriteLine(string.Format(c, "  {0,5} {1,-24} {2,8} {3,8:F3} {4,11:F3} {5,11} {6,14} {7,7:F2}",
+                file.Label, Fit(Path.GetFileName(file.Source), 24), result.OriginalBytes, result.OriginalEntropy,
+                result.ResidualEntropy, result.EncodedBytes, result.PredictedEncodedBytes, result.ElapsedSeconds));
+        }
+        Write("[OK] Усі файли відновлено із залишків побайтово.", ConsoleColor.Green);
+
+        IMeasurementStore store = OpenMeasurementStore();
+        if (store.IsEnabled)
+        {
+            store.SaveExperiment(experiment);
+            Write($"[OK] Результати збережено в базі даних (експеримент №{experiment.Id}).", ConsoleColor.Green);
+        }
+        else
+        {
+            Write("[УВАГА] База даних вимкнена: результати виведено лише в консоль.", ConsoleColor.Yellow);
+        }
+    }
+
+    /// <summary>Розмір після LZ77 + Гаффмана блоками по 64 КБ; блок без виграшу зберігається як є.</summary>
+    private static long EncodedSize(byte[] data) =>
+        data.Length == 0 ? 0 : Lz77CompressionService.PrepareFixedBlocks(data).Sum(b => (long)b.CodedLength);
+
+    private static void TrainClassifierInteractive()
+    {
+        string? dataset = Prompt("Каталог із групами 0..6", "Datasets");
+        string? model = Prompt("Куди зберегти модель", "classifier.json");
+        if (dataset is null || model is null)
+            return;
+        TrainClassifier(dataset, model);
+    }
+
+    /// <summary>
+    /// Навчає класифікатор з кількох seed, обирає модель за macro-F1 на valid,
+    /// зберігає її і пише прогони в базу (експеримент Training).
+    /// </summary>
+    private static void TrainClassifier(string datasetPath, string modelPath)
+    {
+        CultureInfo c = CultureInfo.InvariantCulture;
+        DatasetSplit split = LabeledDataset.SplitByFile(
+            LabeledDataset.Load(datasetPath, LabeledDataset.DefaultChunkSize, LabeledDataset.DefaultMaxChunksPerFile));
+        TrainingOptions options = TrainingOptions.Default;
+
+        Console.WriteLine();
+        Write($"Навчання класифікатора: {split.Train.Count} прикладів у train, {split.Valid.Count} у valid", ConsoleColor.Cyan);
+        Console.WriteLine($"  Мережа {string.Join("-", options.LayerSizes)}, епох {options.Epochs}, швидкість навчання {options.LearningRate.ToString(c)}, seed {string.Join(", ", options.Seeds)}");
+
+        TrainingReport report = ClassifierTrainer.Train(split, options);
+
+        Console.WriteLine();
+        Console.WriteLine($"  {"Seed",4} {"Втрата 1",9} {"Втрата N",9} {"F1 train",9} {"F1 valid",9}");
+        for (int i = 0; i < report.Runs.Count; i++)
+        {
+            TrainingRunResult run = report.Runs[i];
+            Console.WriteLine(string.Format(c, "  {0,4} {1,9:F4} {2,9:F4} {3,9:F3} {4,9:F3}{5}",
+                run.Seed, run.FirstEpochLoss, run.FinalLoss, run.Train.MacroF1, run.Valid.MacroF1,
+                i == report.SelectedIndex ? "  <- обрано" : ""));
+        }
+
+        Console.WriteLine();
+        Console.WriteLine("  Матриця помилок обраної моделі на valid (рядок = справжній тип, стовпець = передбачений):");
+        Console.WriteLine("        " + string.Concat(Enumerable.Range(0, LabeledDataset.ClassCount).Select(k => $"{k,5}")));
+        int[][] matrix = report.Selected.Valid.ToArray();
+        for (int row = 0; row < matrix.Length; row++)
+            Console.WriteLine($"  {row,4}  " + string.Concat(matrix[row].Select(v => $"{v,5}")));
+
+        using (FileStream file = File.Create(modelPath))
+            new FileClassifier(report.Selected.Network).Save(file);
+        Write($"[OK] Модель збережено: {Path.GetFullPath(modelPath)}", ConsoleColor.Green);
+
+        var experiment = new Experiment
+        {
+            Kind = ExperimentKind.Training,
+            StartedAtUtc = DateTime.UtcNow,
+            Dataset = Path.GetFullPath(datasetPath),
+            ParametersJson = JsonSerializer.Serialize(new
+            {
+                chunkSize = LabeledDataset.DefaultChunkSize,
+                maxChunksPerFile = LabeledDataset.DefaultMaxChunksPerFile,
+                split = "every third file of each group goes to valid",
+                features = FeatureVector.Length,
+            }),
+        };
+        for (int i = 0; i < report.Runs.Count; i++)
+        {
+            TrainingRunResult run = report.Runs[i];
+            experiment.TrainingRuns.Add(new TrainingRun
+            {
+                InitSeed = run.Seed,
+                LayerSizes = string.Join(",", options.LayerSizes),
+                Epochs = options.Epochs,
+                LearningRate = options.LearningRate,
+                TrainLoss = run.FinalLoss,
+                TrainMacroF1 = run.Train.MacroF1,
+                ValidMacroF1 = run.Valid.MacroF1,
+                ConfusionMatrixJson = JsonSerializer.Serialize(run.Valid.ToArray()),
+                IsSelected = i == report.SelectedIndex,
+            });
+        }
+
+        IMeasurementStore store = OpenMeasurementStore();
+        if (store.IsEnabled)
+        {
+            store.SaveExperiment(experiment);
+            Write($"[OK] Прогони навчання збережено в базі даних (експеримент №{experiment.Id}).", ConsoleColor.Green);
+        }
+        else
+        {
+            Write("[УВАГА] База даних вимкнена: результати виведено лише в консоль.", ConsoleColor.Yellow);
+        }
+    }
+
+    /// <summary>
+    /// Пакує кожен файл у датасеті ітеративним DP + Гаффманом, розпаковує, порівнює й пише розміри та час у базу.
+    /// </summary>
+    private static void IterativeDpExperimentInteractive()
+    {
+        string? dataset = Prompt(
+            "Каталог корпусу 0..6",
+            "Datasets");
+
+        if (dataset is null)
+            return;
+
+        const int blockSize = 8192;
+        const int maxIterations = 3;
+        const int maxChain = 32;
+
+        DateTime startedAtUtc = DateTime.UtcNow;
+
+        Write(
+            "Запускаємо ітеративний DP + Huffman...",
+            ConsoleColor.Cyan);
+
+        var report = IterativeDpBenchmark.RunDirectory(
+            dataset,
+            blockSize: blockSize,
+            maxIterations: maxIterations,
+            maxChain: maxChain,
+            progress: p => Console.Write(
+                $"\rГрупа {p.Group}, {p.File}: " +
+                $"блок {p.BlocksDone}/{p.BlocksTotal}     "));
+
+        Console.WriteLine();
+
+        long baseline = report.Files.Sum(f => f.BaselineBytes);
+        long optimized = report.Files.Sum(f => f.OptimizedBytes);
+        long gain = baseline - optimized;
+
+        double percent = baseline == 0
+            ? 0
+            : 100.0 * gain / baseline;
+
+        Write("=== Результати D1 №19 ===", ConsoleColor.Cyan);
+
+        Console.WriteLine($"Файлів: {report.Files.Count}");
+        Console.WriteLine($"Початковий DP: {baseline} байт");
+        Console.WriteLine($"Ітеративний DP: {optimized} байт");
+        Console.WriteLine($"Економія: {gain} байт ({percent:F2}%)");
+
+        var iterations = report.Iterations
+            .GroupBy(r => r.Iteration)
+            .OrderBy(g => g.Key)
+            .Select(g => new
+            {
+                iteration = g.Key,
+                blocks = g.Count(),
+                gainBytes = g.Sum(r => (long)r.GainBytes),
+                elapsedSeconds = g.Sum(r => r.ElapsedSeconds)
+            })
+            .ToArray();
+
+        Console.WriteLine();
+        Write("=== Виграш за ітераціями ===", ConsoleColor.Cyan);
+
+        foreach (var iteration in iterations)
+        {
+            Console.WriteLine(
+                $"Ітерація {iteration.iteration}: " +
+                $"виграш {iteration.gainBytes} байт, " +
+                $"час {iteration.elapsedSeconds:F4} с");
+        }
+
+        // Зберігаємо результати через наявну систему БД.
+        var experiment = new Experiment
+        {
+            Kind = ExperimentKind.Parsing,
+            StartedAtUtc = startedAtUtc,
+            Dataset = Path.GetFullPath(dataset),
+
+            ParametersJson = JsonSerializer.Serialize(new
+            {
+                experimentType = "IterativeDp",
+
+                blockSize,
+                maxIterations,
+                maxChain,
+
+                filesCount = report.Files.Count,
+                blocksCount = report.Files.Sum(f => f.Blocks),
+
+                baselineBytes = baseline,
+                optimizedBytes = optimized,
+                gainBytes = gain,
+                gainPercent = percent,
+
+                iterations,
+
+                files = report.Files.Select(f => new
+                {
+                    group = f.Group,
+                    file = f.File,
+                    rawBytes = f.RawBytes,
+                    blocks = f.Blocks,
+                    baselineBytes = f.BaselineBytes,
+                    optimizedBytes = f.OptimizedBytes,
+                    gainBytes = f.GainBytes
+                }).ToArray()
+            })
+        };
+
+        IMeasurementStore store = OpenMeasurementStore();
+
+        if (store.IsEnabled)
+        {
+            store.SaveExperiment(experiment);
+
+            Write(
+                $"[OK] Експеримент №{experiment.Id} " +
+                "збережено в базі даних.",
+                ConsoleColor.Green);
+        }
+        else
+        {
+            Write(
+                "[УВАГА] База даних вимкнена. " +
+                "Результати показано в консолі.",
+                ConsoleColor.Yellow);
+        }
+    }
+    private static void Zip9BonusInteractive()
+{
+    string? dataset = Prompt("Каталог корпусу 0..6", "Datasets");
+    if (dataset is null)
+        return;
+
+    RunZip9Bonus(dataset);
+}
+
+private static void RunZip9Bonus(string dataset)
+{
+    DateTime startedAtUtc = DateTime.UtcNow;
+
+    Write("=== Бонус CP3 №4: SmartArchiver проти ZIP (.NET SmallestSize) ===",
+        ConsoleColor.Cyan);
+    Write("ZIP створюється засобами .NET; це НЕ точне вимірювання Info-ZIP zip -9.",
+        ConsoleColor.DarkCyan);
+
+    Zip9Benchmark.Report report = Zip9Benchmark.RunDirectory(
+        dataset,
+        BuildAndVerifyZip9Sarc,
+        progress: message => Console.WriteLine(message));
+
+    Console.WriteLine();
+    Console.WriteLine($"Файлів: {report.FilesCount}");
+    Console.WriteLine($"Вхідних байтів: {report.RawBytes}");
+    Console.WriteLine($"ZIP (.NET SmallestSize): {report.ZipBytes} Б");
+
+    Console.WriteLine();
+    Write("=== Варіанти реального SARC ===", ConsoleColor.Cyan);
+    foreach (var c in report.Configurations)
+    {
+        Console.WriteLine($"{c.Name}: {c.SarcBytes} Б, " +
+            $"виграш відносно ZIP: {c.DeltaVsZipBytes:+#;-#;0} Б, " +
+            $"час {c.Seconds:F3} с, stored-блоків: {c.StoredBlocks}");
+    }
+
+    Console.WriteLine();
+    string verdict = report.GainBytes > 0
+        ? "[OK] SmartArchiver обігнав .NET ZIP SmallestSize на цьому корпусі!"
+        : report.GainBytes == 0
+            ? "[=] Однаковий розмір із .NET ZIP."
+            : "[INFO] .NET ZIP поки що менший за SARC.";
+    Write(verdict, report.GainBytes > 0 ? ConsoleColor.Green : ConsoleColor.Yellow);
+    Console.WriteLine($"Найкращий режим: {report.Best.Name}");
+    Console.WriteLine($"SARC: {report.Best.SarcBytes} Б; " +
+        $"ZIP .NET: {report.ZipBytes} Б; " +
+        $"виграш SARC: {report.GainBytes:+#;-#;0} Б " +
+        $"({report.GainPercent:+0.00;-0.00;0.00}% від ZIP)");
+
+    Console.WriteLine();
+    Write("=== За групами (окремий архів для кожної групи) ===", ConsoleColor.Cyan);
+    foreach (var group in report.Groups)
+    {
+        Console.WriteLine($"Група {group.Group}: вхід {group.RawBytes} Б; " +
+            $"ZIP .NET = {group.ZipBytes} Б; SARC = {group.SarcBytes} Б; " +
+            $"виграш SARC = {group.GainBytes:+#;-#;0} Б");
+    }
+
+    Console.WriteLine("Усі ZIP та SARC архіви перевірено побайтовим round-trip.");
+    Console.WriteLine("Порівнювали повні архіви з усіма заголовками, без шифрування.");
+    Console.WriteLine("Розміри окремих груп не слід підсумовувати: заголовки повторюються.");
+
+    var experiment = new Experiment
+    {
+        Kind = ExperimentKind.Parsing,
+        StartedAtUtc = startedAtUtc,
+        Dataset = "corpus",
+        ParametersJson = JsonSerializer.Serialize(new
+        {
+            experimentType = "ManagedZipVsSarc",
+            datasetPath = Path.GetFullPath(dataset),
+            zipImplementation = "System.IO.Compression.ZipArchive, CompressionLevel.SmallestSize",
+            fileCount = report.FilesCount,
+            rawBytes = report.RawBytes,
+            zipBytes = report.ZipBytes,
+            bestConfiguration = report.Best.Name,
+            bestSarcBytes = report.Best.SarcBytes,
+            gainBytes = report.GainBytes,
+            gainPercent = report.GainPercent,
+            successful = report.GainBytes > 0,
+            configurations = report.Configurations,
+            groups = report.Groups
+        })
+    };
+
+    IMeasurementStore store = OpenMeasurementStore();
+    if (store.IsEnabled)
+    {
+        store.SaveExperiment(experiment);
+        Write($"[OK] Результати записано в БД: експеримент №{experiment.Id}.",
+            ConsoleColor.Green);
+    }
+    else
+    {
+        Write("[УВАГА] БД вимкнена: результати показано в консолі.",
+            ConsoleColor.Yellow);
+    }
+}
+
+
+    private static Zip9Benchmark.SarcResult BuildAndVerifyZip9Sarc(
+    IReadOnlyList<Zip9Benchmark.SourceFile> sources,
+    Zip9Benchmark.Configuration config)
+    {
+        List<ArchiveInput> inputs = sources.Select(source =>
+        {
+            SafeNames.EnsureSafe(source.Name);
+            return new ArchiveInput(source.Name, source.Bytes);
+        }).ToList();
+
+        BlockSplitMode splitMode = config.SplitMode == Zip9Benchmark.SplitMode.Dp
+            ? BlockSplitMode.Dp
+            : BlockSplitMode.Fixed;
+
+        var writer = new ArchiveWriter(
+            blockSize: config.BlockSize,
+            analyzer: new FileAnalyzer(),
+            parseMode: config.ParseMode,
+            splitMode: splitMode);
+
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        IReadOnlyList<PreparedFile> prepared = writer.Prepare(inputs);
+        byte[] archive = ArchiveWriter.BuildFromPrepared(prepared);
+        watch.Stop();
+
+        IReadOnlyList<ExtractedFile> restored = ArchiveReader.Read(archive);
+        if (restored.Count != inputs.Count)
+            throw new InvalidDataException("SARC round-trip: різна кількість файлів.");
+
+        var byName = restored.ToDictionary(
+            file => file.Name, file => file.Data, StringComparer.Ordinal);
+        foreach (ArchiveInput input in inputs)
+        {
+            if (!byName.TryGetValue(input.Name, out byte[]? decoded)
+                || !decoded.AsSpan().SequenceEqual(input.Data))
+                throw new InvalidDataException($"SARC round-trip не збігся: {input.Name}");
+        }
+
+        int storedBlocks = prepared.Sum(file => file.Blocks.Count(block => block.IsStored));
+        return new Zip9Benchmark.SarcResult(
+            archive.LongLength, watch.Elapsed.TotalSeconds, storedBlocks);
+    }
+
+    private static void ArithmeticExperimentInteractive()
+    {
+        string? dataset = Prompt("Каталог корпусу 0..6", "Datasets");
+        if (dataset is null)
+            return;
+
+        const int blockSize = 65536;
+        const int maxIterations = 3;
+        const int maxChain = 256;
+        DateTime startedAtUtc = DateTime.UtcNow;
+
+        Write("Порівняння Huffman і арифметичного кодування на однакових LZ77-токенах...",
+            ConsoleColor.Cyan);
+
+        var report = ArithmeticBenchmark.RunDirectory(
+            dataset, blockSize, maxIterations, maxChain,
+            progress: p => Console.Write(
+                $"\rГрупа {p.Group}, {p.File}: блок {p.BlocksDone}/{p.BlocksTotal}    "));
+
+        Console.WriteLine();
+        Console.WriteLine();
+        Write("=== CP3 №3: Huffman vs Arithmetic ===", ConsoleColor.Cyan);
+        Console.WriteLine($"Файлів: {report.Files.Count}");
+        Console.WriteLine($"Початкових байтів: {report.RawBytes}");
+        Console.WriteLine($"Huffman повний: {report.HuffmanBytes} байт");
+        Console.WriteLine($"Arithmetic повний: {report.ArithmeticBytes} байт");
+        Console.WriteLine($"Різниця: {report.TotalSavedBytes:+#;-#;0} байт ({report.TotalSavedPercent:+0.00;-0.00;0.00}%)");
+        Console.WriteLine();
+        Console.WriteLine($"Huffman payload: {report.HuffmanPayloadBytes} байт");
+        Console.WriteLine($"Arithmetic payload: {report.ArithmeticPayloadBytes} байт");
+        Console.WriteLine($"Різниця payload: {report.PayloadSavedBytes:+#;-#;0} байт");
+        Console.WriteLine("Додатна різниця = арифметичне кодування менше, від'ємна = Huffman менше.");
+        Console.WriteLine("Усі блоки перевірено на точний round-trip; архівний формат не змінено.");
+
+        foreach (var group in report.Files.GroupBy(f => f.Group).OrderBy(g => g.Key))
+        {
+            long h = group.Sum(f => f.HuffmanBytes);
+            long a = group.Sum(f => f.ArithmeticBytes);
+            long hp = group.Sum(f => f.HuffmanPayloadBytes);
+            long ap = group.Sum(f => f.ArithmeticPayloadBytes);
+            Console.WriteLine($"Група {group.Key}: Huffman={h} Б, Arithmetic={a} Б, " +
+                $"різниця={h - a:+#;-#;0} Б; різниця payload={hp - ap:+#;-#;0} Б");
+        }
+
+        // Стара система збереження: один Experiment -> один JSON у ParametersJson.
+        // Нові таблиці, EF міграції та CSV НЕ потрібні.
+        var experiment = new Experiment
+        {
+            Kind = ExperimentKind.Parsing,
+            StartedAtUtc = startedAtUtc,
+            Dataset = "corpus",
+            ParametersJson = JsonSerializer.Serialize(new
+            {
+                experimentType = "ArithmeticVsHuffman",
+                datasetPath = Path.GetFullPath(dataset),
+                blockSize,
+                maxIterations,
+                maxChain,
+                filesCount = report.Files.Count,
+                rawBytes = report.RawBytes,
+                huffmanBytes = report.HuffmanBytes,
+                arithmeticBytes = report.ArithmeticBytes,
+                totalSavedBytes = report.TotalSavedBytes,
+                totalSavedPercent = report.TotalSavedPercent,
+                huffmanPayloadBytes = report.HuffmanPayloadBytes,
+                arithmeticPayloadBytes = report.ArithmeticPayloadBytes,
+                payloadSavedBytes = report.PayloadSavedBytes,
+                huffmanSeconds = report.Files.Sum(f => f.HuffmanSeconds),
+                arithmeticSeconds = report.Files.Sum(f => f.ArithmeticSeconds),
+                groups = report.Files.GroupBy(f => f.Group).OrderBy(g => g.Key).Select(g => new
+                {
+                    group = g.Key,
+                    huffmanBytes = g.Sum(f => f.HuffmanBytes),
+                    arithmeticBytes = g.Sum(f => f.ArithmeticBytes),
+                    payloadSavedBytes = g.Sum(f => f.PayloadSavedBytes)
+                }).ToArray(),
+                files = report.Files.Select(f => new
+                {
+                    group = f.Group,
+                    file = f.File,
+                    rawBytes = f.RawBytes,
+                    blocks = f.Blocks,
+                    huffmanBytes = f.HuffmanBytes,
+                    arithmeticBytes = f.ArithmeticBytes,
+                    huffmanPayloadBytes = f.HuffmanPayloadBytes,
+                    arithmeticPayloadBytes = f.ArithmeticPayloadBytes,
+                    totalSavedBytes = f.TotalSavedBytes,
+                    payloadSavedBytes = f.PayloadSavedBytes,
+                    huffmanSeconds = f.HuffmanSeconds,
+                    arithmeticSeconds = f.ArithmeticSeconds
+                }).ToArray()
+            })
+        };
+
+        IMeasurementStore store = OpenMeasurementStore();
+        if (store.IsEnabled)
+        {
+            store.SaveExperiment(experiment);
+            Write($"[OK] Експеримент №{experiment.Id} збережено в БД.", ConsoleColor.Green);
+        }
+        else
+            Write("[УВАГА] БД вимкнена. Результати показано в консолі.", ConsoleColor.Yellow);
     }
 
     private static string ByteLabel(byte b) => b switch
@@ -483,20 +2370,15 @@ internal static class ConsoleApp
     // Допоміжне
     // ------------------------------------------------------------------
 
+    /// <summary>Порядок файлів у томах може відрізнятися від вхідного, тому звірка йде за іменем.</summary>
     private static bool SameContent(List<ArchiveInput> inputs, IReadOnlyList<ExtractedFile> restored)
     {
         if (inputs.Count != restored.Count)
         {
             return false;
         }
-        for (int i = 0; i < inputs.Count; i++)
-        {
-            if (inputs[i].Name != restored[i].Name || !inputs[i].Data.AsSpan().SequenceEqual(restored[i].Data.AsSpan()))
-            {
-                return false;
-            }
-        }
-        return true;
+        Dictionary<string, byte[]> byName = restored.ToDictionary(f => f.Name, f => f.Data, StringComparer.Ordinal);
+        return inputs.TrueForAll(i => byName.TryGetValue(i.Name, out byte[]? data) && data.AsSpan().SequenceEqual(i.Data));
     }
 
     /// <summary>Таблиця файлів. Якщо blockSize більший за нуль, додається стовпець із кількістю блоків.</summary>
@@ -532,8 +2414,10 @@ internal static class ConsoleApp
             ErrorCode.E_LENGTH => "архів обрізаний або має зайві байти",
             ErrorCode.E_HMAC => "перевірка автентичності не пройшла",
             ErrorCode.E_PAYLOAD => "внутрішня структура архіву пошкоджена або містить небезпечні дані",
-            ErrorCode.E_CODE => "невідома або ще не підтримувана стратегія стиснення",
+            ErrorCode.E_CODE => "невідома стратегія стиснення або пошкоджені стиснені дані",
             ErrorCode.E_CRC => "вміст файлу змінено: CRC32 не збігається",
+            ErrorCode.E_VOLUMES => "набір томів неповний, містить дублікати або томи з різних архівів",
+            ErrorCode.E_CAPACITY => "блок не вміщується в том: збільште розмір тому або зменште розмір блока",
             _ => "помилка архіву",
         };
         return $"[ПОМИЛКА] {ex.Code}: {meaning}.{Environment.NewLine}  Деталі: {ex.Message}";

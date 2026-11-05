@@ -25,6 +25,20 @@ public sealed class SmartArchiverDbContext(DbContextOptions<SmartArchiverDbConte
 
     public DbSet<TrainingRun> TrainingRuns => Set<TrainingRun>();
 
+    public DbSet<PredictionResult> PredictionResults => Set<PredictionResult>();
+
+    public DbSet<StrategyResult> StrategyResults => Set<StrategyResult>();
+
+    public DbSet<GeneticIndividual> GeneticIndividuals => Set<GeneticIndividual>();
+
+    public DbSet<ArchiveOperation> ArchiveOperations => Set<ArchiveOperation>();
+
+    public DbSet<BlockImpactResult> BlockImpactResults => Set<BlockImpactResult>();
+
+    public DbSet<EncryptionOrderResult> EncryptionOrderResults => Set<EncryptionOrderResult>();
+
+    public DbSet<PredictionQResult> PredictionQResults => Set<PredictionQResult>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<MeasurementRun>(run =>
@@ -61,6 +75,18 @@ public sealed class SmartArchiverDbContext(DbContextOptions<SmartArchiverDbConte
             experiment.HasMany(e => e.PackingResults).WithOne(r => r.Experiment)
                 .HasForeignKey(r => r.ExperimentId).OnDelete(DeleteBehavior.Cascade);
             experiment.HasMany(e => e.TrainingRuns).WithOne(r => r.Experiment)
+                .HasForeignKey(r => r.ExperimentId).OnDelete(DeleteBehavior.Cascade);
+            experiment.HasMany(e => e.PredictionResults).WithOne(r => r.Experiment)
+                .HasForeignKey(r => r.ExperimentId).OnDelete(DeleteBehavior.Cascade);
+            experiment.HasMany(e => e.StrategyResults).WithOne(r => r.Experiment)
+                .HasForeignKey(r => r.ExperimentId).OnDelete(DeleteBehavior.Cascade);
+            experiment.HasMany(e => e.GeneticIndividuals).WithOne(r => r.Experiment)
+                .HasForeignKey(r => r.ExperimentId).OnDelete(DeleteBehavior.Cascade);
+            experiment.HasMany(e => e.BlockImpactResults).WithOne(r => r.Experiment)
+                .HasForeignKey(r => r.ExperimentId).OnDelete(DeleteBehavior.Cascade);
+            experiment.HasMany(e => e.EncryptionOrderResults).WithOne(r => r.Experiment)
+                .HasForeignKey(r => r.ExperimentId).OnDelete(DeleteBehavior.Cascade);
+            experiment.HasMany(e => e.PredictionQResults).WithOne(r => r.Experiment)
                 .HasForeignKey(r => r.ExperimentId).OnDelete(DeleteBehavior.Cascade);
             experiment.ToTable(t =>
             {
@@ -103,6 +129,100 @@ public sealed class SmartArchiverDbContext(DbContextOptions<SmartArchiverDbConte
                     "[TrainMacroF1] BETWEEN 0 AND 1 AND [ValidMacroF1] BETWEEN 0 AND 1");
                 t.HasCheckConstraint("CK_TrainingRuns_LayerSizes", "LEN([LayerSizes]) > 0");
             });
+        });
+
+        modelBuilder.Entity<PredictionResult>(ConfigurePrediction);
+        modelBuilder.Entity<StrategyResult>(ConfigureStrategy);
+        modelBuilder.Entity<GeneticIndividual>(ConfigureGenetic);
+        modelBuilder.Entity<ArchiveOperation>(ConfigureHistory);
+        modelBuilder.Entity<BlockImpactResult>(ConfigureBlockImpact);
+        modelBuilder.Entity<EncryptionOrderResult>(ConfigureEncryptionOrder);
+        modelBuilder.Entity<PredictionQResult>(ConfigurePredictionQ);
+    }
+
+    private static void ConfigurePrediction(EntityTypeBuilder<PredictionResult> result) => result.ToTable(t =>
+    {
+        t.HasCheckConstraint("CK_PredictionResults_Group", $"[Group] <= {MaxFileType}");
+        t.HasCheckConstraint("CK_PredictionResults_Sizes",
+            "[OriginalBytes] >= 0 AND [EncodedBytes] >= 0 AND [PredictedEncodedBytes] >= 0");
+        t.HasCheckConstraint("CK_PredictionResults_Entropy",
+            "[OriginalEntropy] BETWEEN 0 AND 8 AND [ResidualEntropy] BETWEEN 0 AND 8");
+        t.HasCheckConstraint("CK_PredictionResults_Time", "[ElapsedSeconds] >= 0");
+    });
+
+    private static void ConfigureStrategy(EntityTypeBuilder<StrategyResult> result)
+    {
+        result.Property(r => r.Variant).HasConversion<string>().HasMaxLength(20);
+        result.ToTable(t =>
+        {
+            t.HasCheckConstraint("CK_StrategyResults_Group", $"[Group] <= {MaxFileType}");
+            t.HasCheckConstraint("CK_StrategyResults_Variant", OneOf<StrategyVariant>("Variant"));
+            t.HasCheckConstraint("CK_StrategyResults_Files", "[FileCount] >= 0 AND [CompressedFiles] BETWEEN 0 AND [FileCount]");
+            t.HasCheckConstraint("CK_StrategyResults_Sizes", "[OriginalBytes] >= 0 AND [ArchiveBytes] >= 0");
+            t.HasCheckConstraint("CK_StrategyResults_Time", "[PackSeconds] >= 0 AND [UnpackSeconds] >= 0");
+        });
+    }
+
+    private static void ConfigureGenetic(EntityTypeBuilder<GeneticIndividual> individual)
+    {
+        individual.Property(r => r.Algorithm).HasConversion<string>().HasMaxLength(20);
+        individual.HasIndex(r => new { r.ExperimentId, r.Algorithm, r.Generation, r.Individual }).IsUnique();
+        individual.ToTable(t =>
+        {
+            t.HasCheckConstraint("CK_GeneticIndividuals_Algorithm", OneOf<SearchAlgorithm>("Algorithm"));
+            t.HasCheckConstraint("CK_GeneticIndividuals_Position", "[Generation] >= 0 AND [Individual] >= 0");
+            t.HasCheckConstraint("CK_GeneticIndividuals_Fitness", "[Fitness] >= 0 AND [S] BETWEEN 0 AND 1 AND [T] BETWEEN 0 AND 1");
+            t.HasCheckConstraint("CK_GeneticIndividuals_Genes", "ISJSON([GenesJson]) = 1 AND LEFT([GenesJson], 1) = '{'");
+        });
+    }
+
+    private static void ConfigureHistory(EntityTypeBuilder<ArchiveOperation> operation)
+    {
+        operation.Property(o => o.Operation).HasConversion<string>().HasMaxLength(20);
+        operation.Property(o => o.ErrorCode).HasMaxLength(20).IsUnicode(false);
+        operation.HasIndex(o => o.StartedAtUtc);
+        operation.ToTable(t =>
+        {
+            t.HasCheckConstraint("CK_ArchiveOperations_Operation", OneOf<ArchiveOperationKind>("Operation"));
+            t.HasCheckConstraint("CK_ArchiveOperations_Files", "[FileCount] >= 0 AND [CompressedFiles] BETWEEN 0 AND [FileCount]");
+            t.HasCheckConstraint("CK_ArchiveOperations_Sizes", "[OriginalBytes] >= 0 AND [ArchiveBytes] >= 0 AND [VolumeCount] >= 0");
+            t.HasCheckConstraint("CK_ArchiveOperations_Time", "[ElapsedSeconds] >= 0");
+            t.HasCheckConstraint("CK_ArchiveOperations_Error",
+                "([Succeeded] = 1 AND [ErrorCode] IS NULL) OR ([Succeeded] = 0 AND [ErrorCode] IS NOT NULL AND LEN([ErrorCode]) > 0)");
+        });
+    }
+
+    private static void ConfigureBlockImpact(EntityTypeBuilder<BlockImpactResult> result)
+    {
+        result.Property(r => r.DisabledBlock).HasConversion<string>().HasMaxLength(20);
+        result.HasIndex(r => new { r.ExperimentId, r.DisabledBlock }).IsUnique();
+        result.ToTable(t =>
+        {
+            t.HasCheckConstraint("CK_BlockImpactResults_Block", OneOf<PipelineBlock>("DisabledBlock"));
+            t.HasCheckConstraint("CK_BlockImpactResults_Sizes", "[OriginalBytes] >= 0 AND [ArchiveBytes] >= 0 AND [ElapsedSeconds] >= 0");
+            t.HasCheckConstraint("CK_BlockImpactResults_Q", "[S] BETWEEN 0 AND 1 AND [T] BETWEEN 0 AND 1 AND [Q] >= 0");
+            // The metric is 0 when any file was not restored.
+            t.HasCheckConstraint("CK_BlockImpactResults_Restored", "[AllRestored] = 1 OR [Q] = 0");
+        });
+    }
+
+    private static void ConfigureEncryptionOrder(EntityTypeBuilder<EncryptionOrderResult> result) => result.ToTable(t =>
+    {
+        t.HasCheckConstraint("CK_EncryptionOrderResults_Group", $"[Group] <= {MaxFileType}");
+        t.HasCheckConstraint("CK_EncryptionOrderResults_Sizes",
+            "[OriginalBytes] >= 0 AND [CompressThenEncryptBytes] >= 0 AND [EncryptThenCompressBytes] >= 0");
+    });
+
+    private static void ConfigurePredictionQ(EntityTypeBuilder<PredictionQResult> result)
+    {
+        result.HasIndex(r => new { r.ExperimentId, r.Group, r.Predicted }).IsUnique();
+        result.ToTable(t =>
+        {
+            t.HasCheckConstraint("CK_PredictionQResults_Group", $"[Group] <= {MaxFileType}");
+            t.HasCheckConstraint("CK_PredictionQResults_Sizes",
+                "[FileCount] >= 0 AND [OriginalBytes] >= 0 AND [ArchiveBytes] >= 0 AND [ElapsedSeconds] >= 0");
+            t.HasCheckConstraint("CK_PredictionQResults_Q", "[S] BETWEEN 0 AND 1 AND [T] BETWEEN 0 AND 1 AND [Q] >= 0");
+            t.HasCheckConstraint("CK_PredictionQResults_Restored", "[AllRestored] = 1 OR [Q] = 0");
         });
     }
 

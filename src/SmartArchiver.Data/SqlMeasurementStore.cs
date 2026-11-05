@@ -71,6 +71,12 @@ internal sealed class SqlMeasurementStore : IMeasurementStore
             .Include(e => e.ParsingResults)
             .Include(e => e.PackingResults)
             .Include(e => e.TrainingRuns)
+            .Include(e => e.PredictionResults)
+            .Include(e => e.StrategyResults)
+            .Include(e => e.GeneticIndividuals)
+            .Include(e => e.BlockImpactResults)
+            .Include(e => e.EncryptionOrderResults)
+            .Include(e => e.PredictionQResults)
             .AsSplitQuery()
             .SingleOrDefault(e => e.Id == id));
     }
@@ -83,6 +89,29 @@ internal sealed class SqlMeasurementStore : IMeasurementStore
             .Where(e => e.Kind == kind)
             .OrderBy(e => e.StartedAtUtc)
             .ThenBy(e => e.Id)
+            .ToList());
+    }
+
+    public void SaveArchiveOperation(ArchiveOperation operation)
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+        EnsureCreated();
+        Execute(db =>
+        {
+            db.ArchiveOperations.Add(operation);
+            db.SaveChanges();
+        });
+    }
+
+    public IReadOnlyList<ArchiveOperation> ListArchiveOperations(int count)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(count, 1);
+        EnsureCreated();
+        return Execute(db => db.ArchiveOperations
+            .AsNoTracking()
+            .OrderByDescending(o => o.StartedAtUtc)
+            .ThenByDescending(o => o.Id)
+            .Take(count)
             .ToList());
     }
 

@@ -4,21 +4,22 @@ namespace SmartArchiver.Archive;
 
 /// <summary>
 /// 41-байтовий відкритий заголовок тому (big-endian):
-/// 0..4 magic "SARC" | 4 версія | 5..7 номер тому (з 1) | 7..9 кількість томів |
-/// 9..25 сіль | 25..37 nonce | 37..41 ciphertext_len.
-/// Поки шифрування немає, сіль і nonce нульові, а ciphertext_len це довжина payload.
+/// 0..4 magic "SARC" | 4 version | 5..7 volume_index (з 0) | 7..9 volume_count |
+/// 9..25 salt | 25..37 nonce | 37..41 ciphertext_len (FORMAT_SPEC_P2, 1.1).
+/// У незашифрованому томі (всередині тракту, до шифрування) сіль і nonce нульові, а ciphertext_len це довжина payload.
 /// </summary>
 public sealed class VolumeHeader
 {
     private const int OffVersion = 4;
-    private const int OffNumber = 5;
+    private const int OffIndex = 5;
     private const int OffCount = 7;
     private const int OffSalt = 9;
     private const int OffNonce = 25;
     private const int OffLength = 37;
 
     public byte Version { get; init; } = FormatConstants.Version;
-    public ushort VolumeNumber { get; init; } = 1;
+    /// <summary>volume_index: номер тому від 0.</summary>
+    public ushort VolumeIndex { get; init; }
     public ushort VolumeCount { get; init; } = 1;
     public byte[] Salt { get; init; } = new byte[FormatConstants.SaltSize];
     public byte[] Nonce { get; init; } = new byte[FormatConstants.NonceSize];
@@ -33,7 +34,7 @@ public sealed class VolumeHeader
 
         FormatConstants.Magic.CopyTo(destination);
         destination[OffVersion] = Version;
-        BinaryPrimitives.WriteUInt16BigEndian(destination.Slice(OffNumber, 2), VolumeNumber);
+        BinaryPrimitives.WriteUInt16BigEndian(destination.Slice(OffIndex, 2), VolumeIndex);
         BinaryPrimitives.WriteUInt16BigEndian(destination.Slice(OffCount, 2), VolumeCount);
         Salt.AsSpan().CopyTo(destination.Slice(OffSalt, FormatConstants.SaltSize));
         Nonce.AsSpan().CopyTo(destination.Slice(OffNonce, FormatConstants.NonceSize));
@@ -60,15 +61,15 @@ public sealed class VolumeHeader
         if (version != FormatConstants.Version)
             throw new ArchiveException(ErrorCode.E_MAGIC, $"Непідтримувана версія формату: {version}.");
 
-        ushort number = BinaryPrimitives.ReadUInt16BigEndian(source.Slice(OffNumber, 2));
+        ushort index = BinaryPrimitives.ReadUInt16BigEndian(source.Slice(OffIndex, 2));
         ushort count = BinaryPrimitives.ReadUInt16BigEndian(source.Slice(OffCount, 2));
-        if (count == 0 || number == 0 || number > count)
-            throw new ArchiveException(ErrorCode.E_PAYLOAD, "Некоректні номер або кількість томів у заголовку.");
+        if (index >= count)
+            throw new ArchiveException(ErrorCode.E_VOLUMES, $"volume_index {index} не менший за volume_count {count}.");
 
         return new VolumeHeader
         {
             Version = version,
-            VolumeNumber = number,
+            VolumeIndex = index,
             VolumeCount = count,
             Salt = source.Slice(OffSalt, FormatConstants.SaltSize).ToArray(),
             Nonce = source.Slice(OffNonce, FormatConstants.NonceSize).ToArray(),

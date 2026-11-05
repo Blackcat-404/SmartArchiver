@@ -1,6 +1,6 @@
 namespace SmartArchiver.Data.Entities;
 
-/// <summary>Which CP2 experiment a row belongs to. Stored as text, so the table stays readable.</summary>
+/// <summary>Which experiment a row belongs to. Stored as text, so the table stays readable.</summary>
 public enum ExperimentKind
 {
     /// <summary>Greedy, lazy and DP parsing of the stream (LZ77).</summary>
@@ -11,6 +11,24 @@ public enum ExperimentKind
 
     /// <summary>Training the file type classifier.</summary>
     Training,
+
+    /// <summary>Next-byte prediction: entropy and compressed size of residuals against the original.</summary>
+    Prediction,
+
+    /// <summary>Fixed compression strategy against the strategy chosen by the classifier.</summary>
+    Strategy,
+
+    /// <summary>GA evolution journal, together with the random search it is compared with.</summary>
+    Genetic,
+
+    /// <summary>Q of the corpus with each block of the pipeline switched off in turn.</summary>
+    BlockImpact,
+
+    /// <summary>Compression before encryption against compression after it.</summary>
+    EncryptionOrder,
+
+    /// <summary>Q of each corpus group with next-byte prediction and without it.</summary>
+    PredictionQ,
 }
 
 /// <summary>
@@ -39,4 +57,16 @@ public sealed class Experiment
     public List<PackingResult> PackingResults { get; set; } = [];
 
     public List<TrainingRun> TrainingRuns { get; set; } = [];
+
+    public List<PredictionResult> PredictionResults { get; set; } = [];
+
+    public List<StrategyResult> StrategyResults { get; set; } = [];
+
+    public List<GeneticIndividual> GeneticIndividuals { get; set; } = [];
+
+    public List<BlockImpactResult> BlockImpactResults { get; set; } = [];
+
+    public List<EncryptionOrderResult> EncryptionOrderResults { get; set; } = [];
+
+    public List<PredictionQResult> PredictionQResults { get; set; } = [];
 }

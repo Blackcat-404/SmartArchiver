@@ -14,13 +14,20 @@ internal static class TestData
 
     public static ArchiveInput File(string name, byte[] data, FileKind kind = FileKind.Unknown) => new(name, data, kind);
 
-    /// <summary>Очікуваний розмір тому з одним файлом: заголовок + file_count + запис таблиці + блоки з 15-байтовими заголовками + дані.</summary>
+    /// <summary>Очікуваний розмір тому з одним файлом: заголовок + 6 фіксованих байтів payload + запис таблиці + записи блоків + дані.</summary>
     public static int ExpectedLength(string name, int size, int blockSize)
     {
         int nameBytes = Encoding.UTF8.GetByteCount(name);
         int blocks = (size + blockSize - 1) / blockSize;
-        int entry = 2 + nameBytes + 8 + 4 + 1 + 1 + 8;
-        return FormatConstants.HeaderSize + 4 + entry + blocks * FormatConstants.BlockHeaderSize + size;
+        int entry = 2 + nameBytes + 4 + 4 + 1 + 1;
+        return FormatConstants.HeaderSize + FormatConstants.PayloadFixedSize + entry + blocks * FormatConstants.BlockHeaderSize + size;
+    }
+
+    /// <summary>Стиснювані дані: той самий рядок багато разів.</summary>
+    public static byte[] Repetitive(int length)
+    {
+        byte[] bytes = Encoding.ASCII.GetBytes(string.Concat(Enumerable.Repeat("hello world ", length / 12 + 1)));
+        return bytes.AsSpan(0, length).ToArray();
     }
 
     public static ArchiveException AssertCode(ErrorCode expected, Action action)
@@ -29,4 +36,10 @@ internal static class TestData
         Assert.Equal(expected, ex.Code);
         return ex;
     }
+}
+
+/// <summary>Аналізатор із наперед заданою відповіддю: тести стиснення не залежать від навченої моделі.</summary>
+internal sealed class FixedAnalyzer(FileKind kind, CompressionStrategy strategy) : IFileAnalyzer
+{
+    public FileAnalysis Analyze(ReadOnlySpan<byte> data) => new(kind, 1.0, strategy);
 }

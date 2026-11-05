@@ -8,8 +8,6 @@
 
 ## 1. Що таке CI/CD на GitHub і як воно працює
 
-**Задача.** Розібратися, як працює CI, перш ніж додавати в наш `.github/workflows/ci.yml` тести бази даних.
-
 **Промпт:**
 
 > А можеш розказати, що таке CI/CD на GitHub? І як воно все працює?
@@ -88,11 +86,7 @@ jobs:
 - Паролі не пишуть у YAML. Для справжніх секретів є secrets, а тимчасові значення, наприклад пароль до тестової бази, можна згенерувати прямо під час прогону.
 - Linux-контейнери (`services:` або `docker run`) доступні лише на Linux-runner-ах.
 
-**Що зроблено мною.** Пояснення використав, щоб розібратися в наявному `ci.yml` перед тим, як змінювати його (запис 3). Код з цієї відповіді в репозиторій не потрапив.
-
 ## 2. Структура проєкту з EF Core
-
-**Задача.** Зробити базу даних для результатів вимірювань на EF Core і MS SQL Server і зрозуміти, як правильно розкласти таку частину проєкту.
 
 **Промпт:**
 
@@ -299,27 +293,7 @@ dotnet ef migrations add InitialCreate --project src/SmartArchiver.Data
 
 У `Migrations/` з'являться три файли: сама міграція, її `.Designer.cs` і знімок моделі. Варто відкрити згенерований метод `Up` і перевірити, що типи колонок, NULL і NOT NULL та зовнішні ключі саме такі, як задумано.
 
-**Що потрапило в репозиторій.** За цією структурою асистент згенерував проєкт `SmartArchiver.Data`, тести до нього і підключення до CLI. Приклади вище — це ті самі файли, що лежать у репозиторії. Я переглядав зміни й комітив по кроках:
-
-- `2e91da6`: проєкт Data, сутності, `SmartArchiverDbContext`, фабрика для design time, міграція `InitialCreate`, `dotnet-tools.json`;
-- `37bdca6`: сховище результатів (`IMeasurementStore`, реалізації для SQL Server і для режиму без бази, `DatabaseException`) і тести до нього;
-- `58ee43f`: читання налаштувань (`DatabaseSettings`), `appsettings.json`, команда `db` у CLI.
-
-**Як перевірено** (разом з асистентом). 14 автотестів `SmartArchiver.Data.Tests` прогнано на SQL Server 2025 у Docker. Вони перевіряють:
-
-- створення схеми з нуля;
-- повторне застосування міграцій без втрати даних;
-- запис і читання прогону разом з файлами;
-- вимкнену базу при порожньому рядку підключення;
-- некоректний рядок і рядок без назви бази;
-- що пароль не потрапляє в повідомлення про помилку;
-- читання налаштувань і пріоритет `appsettings.Local.json`.
-
-Тести прибирають за собою: після прогону на сервері не лишається тестових баз. Окремо вручну перевірено, що команда `db` з першого запуску створює базу й таблиці, при хибному паролі завершується з кодом 4, а `pack` працює навіть зі зламаними налаштуваннями бази.
-
 ## 3. ci.yml під тести бази даних
-
-**Задача.** У проєкті з'явилися тести бази даних (SQL Server). Без змінної `SMARTARCHIVER_TEST_SQLSERVER` вони пропускаються, тож у CI їх треба запускати з сервером.
 
 **Промпт:**
 
@@ -528,16 +502,7 @@ jobs:
 
 Після пушу перевірте лог кроку Test: на ubuntu в `SmartArchiver.Data.Tests` має бути `Skipped: 0`, на windows `Skipped: 3`.
 
-**Що змінено в репозиторії.** Коміт `f8fd2ab` (`ci: run database tests against SQL Server on Linux`): `ci.yml` з відповіді без змін.
-
-**Як перевірено** (разом з асистентом). Кроки Start і Wait прогнали локально тими самими командами, лише з окремим контейнером на іншому порту. Сервер прийняв вхід приблизно за 8 с, усі 14 тестів `SmartArchiver.Data.Tests` виконалися (жоден не пропущено) і пройшли, звітів `.trx` два. Перевірено також, що без SQL Server 3 тести БД позначаються як пропущені, а не падають.
-
-
 ## 4. Ознаки файлу для класифікатора
-
-**Дата:** 2026-10-15
-
-**Задача.** Почати свою зону «Аналіз файлу»: порахувати числові ознаки вмісту, за якими потім перцептрон визначатиме тип файлу.
 
 **Промпт:**
 
@@ -547,14 +512,14 @@ jobs:
 
 Ознаки — це «відбиток» файлу у вигляді кількох чисел. Жодна з них окремо не визначає тип, але разом вони добре розрізняють текст, код, картинки, виконувані файли й уже стиснені дані. Тому їх і подають на вхід класифікатору, а не приймають рішення за одним порогом на кшталт «висока ентропія — не стискати» (методичка, 10.28).
 
-| Ознака | Як рахувати | Що показує |
-| --- | --- | --- |
-| Ентропія байтів | `H = −Σ p·log2 p` по 256 значеннях, де `p` — частота значення | 0 для одного повторюваного байта, ≈8 для шуму і стиснених даних, 4–5 для тексту |
-| Гістограма | частота кожного значення байта, сума 1 | «склад» файлу: у тексті багато літер і пробілів, у картинках — нулі й 0xFF |
-| Частка друкованих ASCII | байти `0x20…0x7E` плюс `\t`, `\n`, `\r`, поділені на довжину | близько 1 для англійського тексту й коду, близько 0.38 для шуму |
-| Середня довжина рядка | символи без `\n` і `\r`, поділені на кількість рядків | у коді 30–60, у прозі довше, у бінарних файлах «рядки» випадкові |
-| Автокореляція, лаги 1–16 | `r(k) = Σ(x[i]−m)(x[i+k]−m) / Σ(x[i]−m)²` | чи пов'язаний байт із байтом через `k` позицій: у шумі ≈0, у растрі піки на кроці пікселя (наприклад, 4 для RGBA) |
-| Ентропія біграм | та сама формула по парах сусідніх байтів, 0…16 біт | у тексті пари повторюються, тож вона значно нижча, ніж у шуму |
+| Ознака                   | Як рахувати                                                   | Що показує                                                                                                        |
+| ------------------------ | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Ентропія байтів          | `H = −Σ p·log2 p` по 256 значеннях, де `p` — частота значення | 0 для одного повторюваного байта, ≈8 для шуму і стиснених даних, 4–5 для тексту                                   |
+| Гістограма               | частота кожного значення байта, сума 1                        | «склад» файлу: у тексті багато літер і пробілів, у картинках — нулі й 0xFF                                        |
+| Частка друкованих ASCII  | байти `0x20…0x7E` плюс `\t`, `\n`, `\r`, поділені на довжину  | близько 1 для англійського тексту й коду, близько 0.38 для шуму                                                   |
+| Середня довжина рядка    | символи без `\n` і `\r`, поділені на кількість рядків         | у коді 30–60, у прозі довше, у бінарних файлах «рядки» випадкові                                                  |
+| Автокореляція, лаги 1–16 | `r(k) = Σ(x[i]−m)(x[i+k]−m) / Σ(x[i]−m)²`                     | чи пов'язаний байт із байтом через `k` позицій: у шумі ≈0, у растрі піки на кроці пікселя (наприклад, 4 для RGBA) |
+| Ентропія біграм          | та сама формула по парах сусідніх байтів, 0…16 біт            | у тексті пари повторюються, тож вона значно нижча, ніж у шуму                                                     |
 
 На що звернути увагу:
 
@@ -633,23 +598,7 @@ private static double[] Autocorrelation(ReadOnlySpan<byte> data)
 }
 ```
 
-**Що потрапило в репозиторій.** На основі цієї відповіді асистент згенерував проєкт `SmartArchiver.Analysis` з `FileFeatures` і `FeatureExtractor`, тести `FeatureExtractorTests` (23) і команду `analyze` у CLI. Фрагменти вище взято з коду, що потрапив у репозиторій; повністю цей код згенерував асистент. Я переглянув зміни й закомітив їх (`feat(analysis): compute file features for the classifier`, `feat(cli): show file features with the analyze command`).
-
-**Як перевірено** (разом з асистентом).
-
-- 23 тести ознак проходять.
-- Тести справді ловлять помилки: якщо прибрати пробіл з друкованих символів, падає 1 тест; якщо рахувати ентропію натуральним логарифмом замість двійкового, падає 5.
-- Команда `analyze` на реальних файлах дає очікувану картину:
-  - код C# — 100% друкованих, ентропія 4.7;
-  - шум — 8.0 і 15.2 біта, автокореляція нульова;
-  - іконка — піки автокореляції на лагах 4, 8, 12, 16 (пікселі по 4 байти);
-  - український README — 40% друкованих ASCII через кирилицю.
-
 ## 5. Багатошаровий перцептрон без бібліотек
-
-**Дата:** 2026-10-15
-
-**Задача.** Зробити власний перцептрон, який на CP2 класифікуватиме файли за ознаками з запису 4 на 7 типів (`file_type` 0…6 з `FORMAT_SPEC_P2`).
 
 **Промпт:**
 
@@ -780,15 +729,700 @@ private static void AssertNumericalMatch(
             $"parameter {i}: numerical {numerical}, backpropagation {analytic[i]}");
     }
 }
-
-// With learning rate 0.1 and 4 hidden neurons all of seeds 1..30 learn XOR in 2000 epochs;
-// with 0.5 about half of them get stuck, so 0.5 is too large for per-sample updates.
 ```
 
-**Що потрапило в репозиторій.** Асистент згенерував `Perceptron` і тести `PerceptronTests` (20); фрагменти вище взято з цього коду. Я переглянув зміни й закомітив їх (`feat(analysis): multilayer perceptron with training and saved weights`). Обґрунтування вибору записано в `docs/decisions.md`, запис 18.
+## 6. Класифікатор типу файлу: навчання й вибір моделі
 
-**Як перевірено** (разом з асистентом).
+**Промпт:**
 
-- Усі 20 тестів перцептрона проходять: прямий прохід, втрата, чисельний градієнт, XOR з трьох seed, збереження й завантаження, відхилення пошкоджених файлів ваг.
-- Перший варіант тесту XOR зі швидкістю навчання `0.5` не пройшов: мережа застрягла. Перевірка на 30 seed показала, що з `0.5` вчиться лише близько половини запусків, а з `0.1` і 4 прихованими нейронами — всі 30. Тому тест використовує `0.1` і кілька seed.
-- Тести ловлять помилку у зворотному поширенні: якщо замінити похідну `1 − a²` на `1 − a`, падають чисельна перевірка градієнта і навчання XOR.
+> Маю ознаки файлу і власний перцептрон. Тепер треба класифікатор на 7 типів (`file_type` 0…6): навчити на train, обрати модель за macro-F1 на valid щонайменше з трьох ініціалізацій і показати матрицю помилок. Даних мало — по 3 файли на групу. Як правильно підготувати приклади й поділ, що подавати на вхід мережі, як рахувати macro-F1 і на що звернути увагу? Дай приклади коду, від яких можна відштовхуватися.
+
+**Відповідь:**
+
+**Приклади.** Трьох файлів на групу замало для навчання, тому кожен файл ріжуть на шматки (наприклад, по 4 КБ) і кожен шматок стає окремим прикладом. Щоб один великий файл не переважив цілу групу, кількість шматків з файлу обмежують, а надто короткий хвіст відкидають.
+
+**Поділ train/valid — лише за файлами.** Якщо ділити випадково по шматках, у valid потраплять шматки тих самих файлів, що й у train, і valid покаже майже 1.0, нічого не кажучи про узагальнення. Тому цілий файл іде або в train, або у valid, наприклад кожен третій файл групи.
+
+**Вхід мережі.** Ознаки треба звести до однакового масштабу, інакше величини з більшими одиницями переважать: ентропію поділити на 8, ентропію біграм на 16, довжину рядка взяти в логарифмі з верхньою межею. Повна гістограма — 256 входів, що на малому наборі веде до перенавчання; її краще згрупувати, наприклад у 16 інтервалів.
+
+**Навчання.** На кожній епосі приклади треба перемішувати: дані йдуть згрупованими за класами, і без перемішування мережа запам'ятовує переважно останній клас. Мережу навчають з кількох seed і обирають ту, що має найкращий macro-F1 на valid (методичка, 10.42).
+
+**Macro-F1.** Для кожного класу `F1 = 2·P·R / (P + R)`, де P — точність (precision), R — повнота (recall); macro-F1 — середнє по класах. На відміну від частки правильних відповідей, він карає модель, яка ігнорує рідкісний клас. Класи, яких немає ні серед справжніх, ні серед передбачених міток, з середнього виключають.
+
+**Матриця помилок** показує, які саме класи плутаються: рядок — справжній клас, стовпець — передбачений. Якщо train дає 1.0, а valid помітно менше, саме матриця покаже, чи це перенавчання загалом, чи дві конкретні групи, яким бракує різноманітних прикладів.
+
+Приклад: поділ за файлами.
+
+```csharp
+/// <summary>
+/// Every third file of each group (by name) goes to valid, the rest to train. Splitting by file rather than by
+/// piece keeps pieces of the same file out of both sets, otherwise valid would partly repeat train.
+/// </summary>
+public static DatasetSplit SplitByFile(IReadOnlyList<LabeledSample> samples)
+{
+    ArgumentNullException.ThrowIfNull(samples);
+    var validSources = new HashSet<string>(StringComparer.Ordinal);
+    foreach (IGrouping<int, LabeledSample> group in samples.GroupBy(s => s.Label))
+    {
+        string[] sources = [.. group.Select(s => s.Source).Distinct().Order(StringComparer.Ordinal)];
+        for (int i = 2; i < sources.Length; i += 3)
+            validSources.Add(sources[i]);
+    }
+    return new DatasetSplit(
+        [.. samples.Where(s => !validSources.Contains(s.Source))],
+        [.. samples.Where(s => validSources.Contains(s.Source))]);
+}
+```
+
+Приклад: навчання однієї мережі з перемішуванням і оцінкою.
+
+```csharp
+private static TrainingRunResult TrainOne(DatasetSplit data, TrainingOptions options, int seed)
+{
+    var network = new Perceptron(options.LayerSizes, seed);
+    var shuffle = new Random(seed);
+    LabeledSample[] order = [.. data.Train];
+
+    double firstLoss = 0, loss = 0;
+    for (int epoch = 0; epoch < options.Epochs; epoch++)
+    {
+        // Samples arrive grouped by class; without shuffling the network would mostly remember the last group.
+        shuffle.Shuffle(order);
+        loss = network.TrainEpoch(
+            [.. order.Select(s => s.Input)], [.. order.Select(s => s.Label)], options.LearningRate);
+        if (epoch == 0)
+            firstLoss = loss;
+    }
+
+    return new TrainingRunResult(seed, network, firstLoss, loss, Evaluate(network, data.Train), Evaluate(network, data.Valid));
+}
+```
+
+Приклад: macro-F1 за матрицею помилок.
+
+```csharp
+/// <summary>Harmonic mean of precision and recall; 0 when both are 0.</summary>
+public double F1(int c)
+{
+    double p = Precision(c), r = Recall(c);
+    return p + r == 0 ? 0 : 2 * p * r / (p + r);
+}
+
+/// <summary>
+/// Mean F1 over the classes that occur as an actual label or as a prediction.
+/// Classes absent from both are left out, so a sample without some file types is not penalised for them.
+/// </summary>
+public double MacroF1
+{
+    get
+    {
+        double sum = 0;
+        int classes = 0;
+        for (int c = 0; c < ClassCount; c++)
+        {
+            if (RowSum(c) == 0 && ColumnSum(c) == 0)
+                continue;
+            sum += F1(c);
+            classes++;
+        }
+        return classes == 0 ? 0 : sum / classes;
+    }
+}
+```
+
+## 7. Контракт аналізу для архіву і вибір стратегії стиснення
+
+**Промпт:**
+
+> Архів має питати в аналізу тип файлу й стратегію стиснення. Як оформити цей контракт між зонами, як узгодити нумерацію типів і стратегій з FORMAT_SPEC_P2 і як обирати, стискати файл чи ні? Класифікатор іноді помиляється — наприклад, приймає український текст за вже стиснений. Дай приклад коду.
+
+**Відповідь:**
+
+**Контракт.** Інтерфейс кладуть у спільний проєкт Core, щоб від нього залежали і архів, і аналіз, а не одне від одного: `IFileAnalyzer.Analyze(байти)` повертає `FileAnalysis(Kind, Confidence, Strategy)`.
+
+**Нумерація.** Значення, що пишуться в архів, мають збігатися зі специфікацією: `file_type` 0…6 у порядку з таблиці 2.2, а стратегія — як у контрольному архіві розділу 8, де файл, стиснений LZ77 + Гаффманом, має `strategy = 1`. Стан «ще не класифіковано» варто винести за межі 0…6, щоб він не міг випадково потрапити в архів.
+
+**Стратегія — за асиметрією помилок.** Стиснути вже стиснене коштує лише часу: кодер однаково збереже блок як є, якщо виграшу немає. А не стиснути текст — це втрата всього виграшу в розмірі. Тому «не стискати» варто лише тоді, коли згодні класифікатор і самі дані:
+
+- шум і стиснені дані мають ентропію майже 8 біт на байт — їх не стискають за будь-якого класу;
+- клас «вже стиснуте» приймають лише за високої ентропії (наприклад, від 7.0); український текст має близько 5, тож його стиснуть, навіть якщо класифікатор помилився;
+- одна ентропія рішення не ухвалює: нестиснений растр з плавним градієнтом може мати 7.75 і добре стискатися (методичка, 10.28), тому поріг шуму ставлять ближче до 8.
+
+Приклад контракту:
+
+```csharp
+namespace SmartArchiver.Core;
+
+/// <summary>What the analyzer decided about a file before it is archived.</summary>
+/// <param name="Kind">File type written to the archive as file_type.</param>
+/// <param name="Confidence">Probability the classifier gave to <paramref name="Kind"/>, from 0 to 1.</param>
+/// <param name="Strategy">How the archive should compress the file.</param>
+public sealed record FileAnalysis(FileKind Kind, double Confidence, CompressionStrategy Strategy);
+
+/// <summary>
+/// Contract between file analysis and the archive: the archive asks for every file it packs,
+/// writes <see cref="FileAnalysis.Kind"/> as file_type and compresses according to <see cref="FileAnalysis.Strategy"/>.
+/// </summary>
+public interface IFileAnalyzer
+{
+    FileAnalysis Analyze(ReadOnlySpan<byte> data);
+}
+```
+
+Приклад вибору стратегії:
+
+```csharp
+/// <summary>
+/// Noise and already compressed data are stored as they are: LZ77 finds no repeats there and the Huffman
+/// tables only add bytes. Everything else, including artificial data with repeats, is compressed.
+/// </summary>
+private static CompressionStrategy ChooseStrategy(FileKind kind, FileFeatures features, int length)
+{
+    if (length == 0 || features.Entropy >= NoiseEntropy)
+        return CompressionStrategy.NoCompression;
+    if (kind == FileKind.AlreadyCompressed && features.Entropy >= CompressedEntropy)
+        return CompressionStrategy.NoCompression;
+    return CompressionStrategy.Lz77Huffman;
+}
+```
+
+## 8. Передбачення наступного байта з кодуванням залишків
+
+**Промпт:**
+
+> Для просунутого рівня треба, щоб перцептрон за k попередніми байтами передбачав наступний, а кодувався залишок за модулем 256. Ваги мають записуватися в архів або мережа має бути детермінована, інакше не розпакувати. Як це влаштувати, щоб розпакування гарантовано повторило прогноз, що робити з вагами і як перевірити, де прогноз допомагає? Дай приклади коду.
+
+**Відповідь:**
+
+**Схема.** Для кожної позиції мережа отримує k попередніх байтів і видає прогноз `p`. Записується `r = (x − p) mod 256`. Розпакування йде зліва направо: має вже відновлені попередні байти, рахує той самий `p` і відновлює `x = (r + p) mod 256`. Якщо прогноз часто правильний, залишки здебільшого нулі, їхня ентропія менша, і наступне стиснення (LZ77 + Гаффман) працює краще.
+
+**Вхід і вихід.** Байт — це категорія, а не число, тому зручно подавати кожен попередній байт як one-hot (256 входів на байт), а на виході мати 256 класів. Прогноз — клас із найбільшим виходом; для цього softmax не потрібен, досить порівняти значення до нього.
+
+**Детермінованість.** Найнебезпечніше місце: прогноз при розпакуванні має збігтися до біта. Функції на кшталт `Math.Exp` і `Math.Tanh` можуть давати різний останній знак на різних ОС, і тоді архів, створений на Windows, не розпакується на Linux. Безпечно використовувати лише арифметику, яку IEEE 754 гарантує однаково скрізь: додавання, множення, ділення, модуль. Тому в прихованому шарі краще softsign `x / (1 + |x|)` замість tanh, а прогноз брати до softmax.
+
+**Ваги.** Записувати ваги в кожен архів дорого: навіть невелика мережа — десятки тисяч чисел, тобто сотні кілобайтів, що більше за багато файлів. Альтернатива з умови — детермінована мережа: одна модель, навчена заздалегідь і однакова в пакувальника й розпаковувача. Щоб розпаковувач з іншими вагами не видав мовчки сміття, на початок закодованих даних варто записати ідентифікатор моделі (наприклад, перші 8 байтів SHA-256 від усіх ваг) і перевіряти його.
+
+**Перевірка.** Обов'язково: новий об'єкт, завантажений лише з файлу ваг, відновлює дані із залишків побайтово. І чесне вимірювання на файлах, яких модель не бачила: ентропія й розмір після стиснення для самого файлу і для залишків, по групах. Прогноз не зобов'язаний допомагати скрізь: для вже стиснених даних — ні, а для символьних даних залишок від одного найімовірнішого символу може навіть збільшити ентропію, бо помилки дають довільні різниці кодів.
+
+Приклад прогнозу: прихований шар рахується лише за активними входами one-hot, softsign, вибір найбільшого виходу.
+
+```csharp
+/// <summary>The guess for the byte that follows <paramref name="history"/>; only its last k bytes matter.</summary>
+public byte Predict(ReadOnlySpan<byte> history)
+{
+    // Hidden layer: the input is one-hot, so each neuron adds its bias and the weights of the k active inputs.
+    Span<double> h = hidden <= 256 ? stackalloc double[hidden] : new double[hidden];
+    int inputs = 256 * ContextBytes;
+    for (int j = 0; j < hidden; j++)
+    {
+        double sum = hiddenBiases[j];
+        for (int back = 0; back < ContextBytes && back < history.Length; back++)
+            sum += hiddenWeights[j * inputs + back * 256 + history[history.Length - 1 - back]];
+        h[j] = sum / (1 + Math.Abs(sum));
+    }
+
+    int best = 0;
+    double bestValue = double.NegativeInfinity;
+    for (int o = 0; o < 256; o++)
+    {
+        double sum = outputBiases[o];
+        for (int j = 0; j < hidden; j++)
+            sum += outputWeights[o * hidden + j] * h[j];
+        if (sum > bestValue)
+        {
+            bestValue = sum;
+            best = o;
+        }
+    }
+    return (byte)best;
+}
+```
+
+Приклад кодування і розкодування залишків з перевіркою моделі.
+
+```csharp
+/// <summary>Model id (8 bytes, big-endian), then one residual per byte.</summary>
+public byte[] Encode(ReadOnlySpan<byte> data)
+{
+    var encoded = new byte[ModelIdSize + data.Length];
+    BinaryPrimitives.WriteUInt64BigEndian(encoded, ModelId);
+    for (int i = 0; i < data.Length; i++)
+        encoded[ModelIdSize + i] = (byte)(data[i] - Predict(data[..i]));
+    return encoded;
+}
+
+/// <exception cref="InvalidDataException">The data is too short or was encoded with another model.</exception>
+public byte[] Decode(ReadOnlySpan<byte> encoded)
+{
+    if (encoded.Length < ModelIdSize)
+        throw new InvalidDataException("Predicted data is shorter than the model id.");
+    ulong id = BinaryPrimitives.ReadUInt64BigEndian(encoded);
+    if (id != ModelId)
+        throw new InvalidDataException($"Data was encoded with predictor model {id:X16}, this one is {ModelId:X16}.");
+
+    ReadOnlySpan<byte> residuals = encoded[ModelIdSize..];
+    var data = new byte[residuals.Length];
+    for (int i = 0; i < data.Length; i++)
+        data[i] = (byte)(residuals[i] + Predict(data.AsSpan(0, i)));
+    return data;
+}
+```
+
+## 9. Експеримент «фіксована стратегія проти класифікатора»
+
+**Промпт:**
+
+> Архів уже вміє аналізувати файли й стискати їх. Треба обов'язковий експеримент: порівняти фіксовану стратегію стиснення зі стратегією, яку обирає класифікатор, і записати результат у БД. Що саме порівнювати, як правильно міряти час, якщо операції тривають мілісекунди, і як не зробити архів залежним від проєкту аналізу? Дай приклад коду.
+
+**Відповідь:**
+
+**Що порівнювати.** Корисно мати три варіанти, а не два: нижню межу «без стиснення», фіксовану стратегію «завжди стискати» і рішення класифікатора. Нижня межа показує, скільки взагалі дає стиснення, а різниця між двома іншими — внесок саме класифікатора. Для кожного варіанта: розмір архіву, час запакування, час розпакування і чи всі файли відновлено побайтово — якщо ні, решта чисел не має сенсу.
+
+**Залежності.** Порівняння живе там, де запис і читання архіву, а класифікатор передається через контракт `IFileAnalyzer` з Core. Тоді архів не знає про перцептрон, а фіксовану стратегію можна задати маленьким класом, що завжди відповідає «стискати».
+
+**Час.** Операції на файлах у десятки кілобайтів тривають мілісекунди, тож один прогін — переважно шум: перший виклик ще й платить за JIT-компіляцію. Стандартний прийом — один «розігрівальний» прогін, який не рахується, потім кілька повторів і медіана: вона, на відміну від середнього, не чутлива до одиничного викиду (наприклад, збирання сміття посеред виміру).
+
+**Чого чекати.** Виграш класифікатора в розмірі може бути нульовим, якщо архіватор і так зберігає як є блоки, яким стиснення не допомогло: тоді «не стискати» економить лише спробу стиснення, тобто час. Такий результат — теж результат; його треба показати й пояснити, де класифікатор може допомогти більше (дорогий розбір, великі вже стиснені файли).
+
+Приклад: прогін з розігрівом і медіаною.
+
+```csharp
+public static IReadOnlyList<StrategyMeasurement> Run(
+    IReadOnlyList<GroupedFile> files, IFileAnalyzer classifier, int blockSize = FormatConstants.DefaultBlockSize,
+    int repeats = 5)
+{
+    ArgumentNullException.ThrowIfNull(files);
+    ArgumentNullException.ThrowIfNull(classifier);
+    ArgumentOutOfRangeException.ThrowIfLessThan(repeats, 1);
+
+    var results = new List<StrategyMeasurement>();
+    foreach (IGrouping<int, GroupedFile> group in files.GroupBy(f => f.Group).OrderBy(g => g.Key))
+    {
+        ArchiveInput[] groupFiles = [.. group.Select(f => f.File)];
+        foreach (StrategyVariant variant in Enum.GetValues<StrategyVariant>())
+        {
+            Measure(group.Key, groupFiles, variant, classifier, blockSize);
+            StrategyMeasurement[] runs = [.. Enumerable.Range(0, repeats)
+                .Select(_ => Measure(group.Key, groupFiles, variant, classifier, blockSize))];
+            results.Add(runs[0] with
+            {
+                PackSeconds = Median([.. runs.Select(r => r.PackSeconds)]),
+                UnpackSeconds = Median([.. runs.Select(r => r.UnpackSeconds)]),
+                AllRestored = runs.All(r => r.AllRestored),
+            });
+        }
+    }
+    return results;
+}
+
+/// <summary>Middle value; for an even count, the mean of the two middle values.</summary>
+public static double Median(IReadOnlyList<double> values)
+{
+    ArgumentNullException.ThrowIfNull(values);
+    if (values.Count == 0)
+        throw new ArgumentException("No values.", nameof(values));
+    double[] sorted = [.. values.Order()];
+    int middle = sorted.Length / 2;
+    return sorted.Length % 2 == 1 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+```
+
+Приклад: один вимір — пакування, розпакування, побайтова перевірка.
+
+```csharp
+private static StrategyMeasurement Measure(
+    int group, ArchiveInput[] files, StrategyVariant variant, IFileAnalyzer classifier, int blockSize)
+{
+    // The true group is written as file_type unless the classifier is the one deciding.
+    ArchiveInput[] inputs = variant == StrategyVariant.Classifier
+        ? [.. files.Select(f => f with { Kind = FileKind.Unknown })]
+        : [.. files.Select(f => f with { Kind = (FileKind)group })];
+    IFileAnalyzer? analyzer = variant switch
+    {
+        StrategyVariant.Stored => null,
+        StrategyVariant.Fixed => new AlwaysCompress(),
+        _ => classifier,
+    };
+
+    var watch = Stopwatch.StartNew();
+    byte[] archive = new ArchiveWriter(blockSize, analyzer).Build(inputs);
+    double packSeconds = watch.Elapsed.TotalSeconds;
+
+    watch.Restart();
+    IReadOnlyList<ExtractedFile> restored = ArchiveReader.Read(archive);
+    double unpackSeconds = watch.Elapsed.TotalSeconds;
+
+    bool allRestored = restored.Count == files.Length
+        && files.Zip(restored).All(pair => pair.First.Data.AsSpan().SequenceEqual(pair.Second.Data));
+    return new StrategyMeasurement(
+        group,
+        variant,
+        files.Length,
+        restored.Count(f => f.Strategy == CompressionStrategy.Lz77Huffman),
+        files.Sum(f => (long)f.Data.Length),
+        archive.Length,
+        packSeconds,
+        unpackSeconds,
+        allRestored);
+}
+```
+
+## 10. Журнал еволюції ГА в базі даних і в CSV
+
+**Промпт:**
+
+> На CP3 ГА запускатиме інший учасник, а журнал еволюції має бути в БД ще до першого запуску: покоління, пристосованість, хромосоми, плюс експорт у CSV, який лежатиме в репозиторії. З журналу потім будуються таблиця «ГА проти випадкового пошуку» і фронт Парето. Як спроєктувати таблицю, якщо хромосома буває з 3 генів і повна, і як зробити CSV, однаковий на будь-якій машині? Дай приклад коду.
+
+**Відповідь:**
+
+**Що зберігати.** Краще кожну перевірену хромосому, а не лише найкращу в поколінні. Найкраща й середня пристосованість по поколіннях виводяться з повного журналу, а навпаки не вийде: фронт Парето потребує обох складових Q (S і T) кожної хромосоми. ГА і випадковий пошук варто писати в один експеримент з колонкою «алгоритм», тоді обидва варіанти порівнюються в межах одного запуску.
+
+**Гени.** Хромосома змінюється між рівнями (3 гени, потім повна), тому окрема колонка на ген вимагала б міграції на кожну зміну. JSON-об'єкт в одній колонці гнучкий, а SQL Server перевіряє його коректність через `ISJSON`. Діапазони окремих генів тоді перевіряє сам ГА.
+
+**Цілісність.** CHECK-обмеження на межі значень і унікальний індекс (експеримент, алгоритм, покоління, особина), щоб та сама особина не потрапила в журнал двічі.
+
+```csharp
+private static void ConfigureGenetic(EntityTypeBuilder<GeneticIndividual> individual)
+{
+    individual.Property(r => r.Algorithm).HasConversion<string>().HasMaxLength(20);
+    individual.HasIndex(r => new { r.ExperimentId, r.Algorithm, r.Generation, r.Individual }).IsUnique();
+    individual.ToTable(t =>
+    {
+        t.HasCheckConstraint("CK_GeneticIndividuals_Algorithm", OneOf<SearchAlgorithm>("Algorithm"));
+        t.HasCheckConstraint("CK_GeneticIndividuals_Position", "[Generation] >= 0 AND [Individual] >= 0");
+        t.HasCheckConstraint("CK_GeneticIndividuals_Fitness", "[Fitness] >= 0 AND [S] BETWEEN 0 AND 1 AND [T] BETWEEN 0 AND 1");
+        t.HasCheckConstraint("CK_GeneticIndividuals_Genes", "ISJSON([GenesJson]) = 1 AND LEFT([GenesJson], 1) = '{'");
+    });
+}
+```
+
+**CSV.** Фіксовані колонки, далі по колонці на ген у порядку першої появи; якщо в хромосомі гена немає, клітинка порожня. Щоб файл був однаковий на будь-якій машині: числа в інваріантній культурі (інакше в українській локалі вийде `0,5` замість `0.5`, і кома зламає CSV), рядки закінчуються `\n`, значення з комою чи лапками екрануються за RFC 4180.
+
+```csharp
+foreach ((GeneticIndividual individual, Dictionary<string, string> genes) in rows)
+{
+    writer.Write(string.Join(',',
+        individual.Algorithm.ToString(),
+        individual.Generation.ToString(CultureInfo.InvariantCulture),
+        individual.Individual.ToString(CultureInfo.InvariantCulture),
+        individual.Fitness.ToString("R", CultureInfo.InvariantCulture),
+        individual.S.ToString("R", CultureInfo.InvariantCulture),
+        individual.T.ToString("R", CultureInfo.InvariantCulture)));
+    foreach (string name in geneNames)
+        writer.Write("," + (genes.TryGetValue(name, out string? value) ? Escape(value) : ""));
+    writer.Write('\n');
+}
+```
+
+## 11. Історія архівацій без імен файлів і паролів
+
+**Промпт:**
+
+> Потрібна історія архівацій у БД: кожна запаковка й розпаковка, щоб потім показати її в інтерфейсі. Але в базі не має бути паролів, ключів і відкритих імен файлів, а архіватор має працювати навіть без бази. Як це спроєктувати і як перевірити тестами? Дай приклад коду.
+
+**Відповідь:**
+
+**Захист через схему.** Надійніше не мати колонок, куди могло б потрапити ім'я чи пароль, ніж фільтрувати їх перед записом. У таблиці лише числа, дата, вид операції й код помилки. Тест через рефлексію перевіряє, що інших текстових полів у сутності немає, тож нова колонка з ім'ям не пройде непомітно.
+
+```csharp
+[Fact]
+public void ArchiveOperation_HasNoTextBesidesTheErrorCode()
+{
+    // History must not keep file names, paths, passwords or keys: there is simply no column that could hold them.
+    Assert.Equal(
+        [nameof(ArchiveOperation.ErrorCode)],
+        typeof(ArchiveOperation).GetProperties().Where(p => p.PropertyType == typeof(string)).Select(p => p.Name));
+}
+```
+
+**Невдалі операції теж записуються**, з кодом помилки. Узгодженість гарантує CHECK: код є тоді й лише тоді, коли операція не вдалася. Тут є пастка тризначної логіки SQL: порівняння з NULL дає «невідомо», а CHECK пропускає «невідомо». Тому NULL треба перевіряти явно:
+
+```csharp
+t.HasCheckConstraint("CK_ArchiveOperations_Error",
+    "([Succeeded] = 1 AND [ErrorCode] IS NULL) OR ([Succeeded] = 0 AND [ErrorCode] IS NOT NULL AND LEN([ErrorCode]) > 0)");
+```
+
+**Незалежність від бази.** Запис в історію йде після операції. Без бази він нічого не робить, а помилка бази перетворюється на попередження, тож архів однаково створюється.
+
+```csharp
+private static void RecordHistory(ArchiveOperation operation, System.Diagnostics.Stopwatch watch, string? errorCode)
+{
+    operation.ElapsedSeconds = watch.Elapsed.TotalSeconds;
+    operation.Succeeded = errorCode is null;
+    operation.ErrorCode = errorCode;
+    try
+    {
+        IMeasurementStore store = OpenMeasurementStore();
+        if (store.IsEnabled)
+            store.SaveArchiveOperation(operation);
+    }
+    catch (DatabaseException ex)
+    {
+        Write($"[УВАГА] Операцію не записано в історію: {ex.Message}", ConsoleColor.Yellow);
+    }
+}
+```
+
+## 12. Дані для обов'язкових таблиць звіту
+
+**Промпт:**
+
+> У звіті 5 обов'язкових таблиць: розбір потоку, вплив кожного блоку тракту, ДП проти жадібного пакування першого тому, порядок стиснення й шифрування, збіжність ГА проти випадкового пошуку. Інтеграція має будувати їх однією командою з БД. Що з цього треба додати в базу і як зробити так, щоб таблиці будувалися автоматично і були відтворювані? Дай приклад коду.
+
+**Відповідь:**
+
+**Межа відповідальності.** Хай шар даних повертає готові рядки кожної таблиці, а генератор звіту лише форматує їх у Markdown чи CSV. Тоді обчислення (коефіцієнти, зміна Q, найкраща пристосованість досі) покриваються тестами без БД, а звіт гарантовано збігається з даними.
+
+**Відсутні дані.** Для «впливу блоків» і «порядку шифрування» потрібні окремі таблиці з обмеженнями. У впливі блоків варто зашити в CHECK визначення метрики: якщо хоч один файл не відновився, Q = 0.
+
+**Відтворюваність.** Біля кожної таблиці потрібні номер, дата й коміт експерименту, з якого вона взята. Брати слід найновіший експеримент свого виду, у якому є рядки, бо деякі експерименти того ж виду зберігають результати лише в JSON.
+
+**Чесне порівняння ГА з випадковим пошуком** будується за кількістю обчислень пристосованості, а не за номером покоління:
+
+```csharp
+foreach (IGrouping<SearchAlgorithm, GeneticIndividual> algorithm in experiment.GeneticIndividuals
+    .GroupBy(i => i.Algorithm)
+    .OrderBy(g => g.Key))
+{
+    int evaluations = 0;
+    double bestSoFar = double.NegativeInfinity;
+    foreach (IGrouping<int, GeneticIndividual> generation in algorithm.GroupBy(i => i.Generation).OrderBy(g => g.Key))
+    {
+        evaluations += generation.Count();
+        double best = generation.Max(i => i.Fitness);
+        bestSoFar = Math.Max(bestSoFar, best);
+        rows.Add(new ConvergenceRow(algorithm.Key, generation.Key, evaluations, best, generation.Average(i => i.Fitness), bestSoFar));
+    }
+}
+```
+
+Вибір експерименту для таблиці:
+
+```csharp
+foreach (Experiment summary in store.ListExperiments(kind).Reverse())
+{
+    Experiment? experiment = store.GetExperiment(summary.Id);
+    IReadOnlyList<TRow> table = experiment is null ? [] : rows(experiment);
+    if (table.Count > 0)
+        return new ReportTable<TRow>(
+            new ReportSource(experiment!.Id, experiment.StartedAtUtc, experiment.CommitHash, experiment.Dataset), table);
+}
+return new ReportTable<TRow>(null, []);
+```
+
+## 13. Тести бази даних: схема з нуля, відкат, цілісність
+
+**Промпт:**
+
+> Потрібні тести БД: обмеження цілісності, відкат транзакції при помилці і створення схеми з нуля. Частина вже є, але один раз модель змінили без нової міграції, і це виявилося лише на тестах з базою. Як перевірити, що міграції створюють рівно ту схему, що описана в моделі, і що невдалий запис нічого не лишає? Дай приклад коду.
+
+**Відповідь:**
+
+**Пропущена міграція** ловиться без сервера: EF Core порівнює модель зі знімком останньої міграції.
+
+```csharp
+[Fact]
+public void Model_HasNoChangesMissingFromTheMigrations()
+{
+    // Runs without a server: a change to the model without "dotnet ef migrations add" fails here, not at first start.
+    using SmartArchiverDbContext db = new DesignTimeDbContextFactory().CreateDbContext([]);
+
+    Assert.False(db.Database.HasPendingModelChanges());
+}
+```
+
+**Схема з нуля.** Порожню базу після міграцій можна порівняти з моделлю повністю: таблиці, CHECK, зовнішні ключі, унікальні індекси. Такий тест не треба оновлювати з кожною новою таблицею. Дві пастки: CHECK-обмеження є лише в design-time моделі, а `sys.indexes` повертає й індекси системних таблиць, тож запит треба обмежити таблицями користувача.
+
+```csharp
+// CHECK constraints are kept only in the design-time model, not in the one used at run time.
+IEntityType[] entities = [.. db.GetService<IDesignTimeModel>().Model.GetEntityTypes()];
+
+Assert.Equal(
+    entities.SelectMany(e => e.GetCheckConstraints()).Select(c => c.Name!).Order(StringComparer.Ordinal),
+    Names(db, "SELECT name AS Value FROM sys.check_constraints"));
+```
+
+**Відкат міграцій.** Відкотити всі міграції до порожньої бази і застосувати знову: так виконується кожен `Down()`.
+
+```csharp
+migrator.Migrate(Migration.InitialDatabase);
+Assert.Empty(Names(db, "SELECT name AS Value FROM sys.tables WHERE name <> '__EFMigrationsHistory'"));
+
+migrator.Migrate();
+Assert.Equal(db.Database.GetMigrations(), db.Database.GetAppliedMigrations());
+```
+
+**Відкат транзакції.** Мало перевірити, що запис кинув виняток. Треба ще переконатися, що не лишилося нічого, навіть коректних рядків того самого запису:
+
+```csharp
+Assert.Throws<DatabaseException>(() => store.SaveExperiment(experiment));
+
+// One transaction: the experiment and the results that were valid are rolled back too.
+Assert.Empty(store.ListExperiments(experiment.Kind));
+```
+
+## 14. Вплив прогнозу байта на Q по групах
+
+**Промпт:**
+
+> На просунутому рівні треба показати Q з прогнозом наступного байта і без, окремо по групах корпусу, з поясненням. Формат архіву не визначає, як записувати залишки прогнозу, а архів не повинен залежати від проєкту аналізу. До того ж прогноз повільний: близько 25 мкс на байт. Як чесно виміряти Q і прискорити прогноз, не змінивши результату? Дай приклад коду.
+
+**Відповідь:**
+
+**Вимір без зміни формату.** Пропустити залишки через наявний повний тракт: перед запакуванням замінити файл залишками, після розпакування відновити байти й звірити з оригіналом. Час прогнозу й відновлення входить у T, тож Q враховує обидві ціни. Щоб архів не залежав від перцептрона, потрібен маленький контракт у Core, як `IFileAnalyzer`:
+
+```csharp
+public interface IResidualCoder
+{
+    byte[] Encode(ReadOnlySpan<byte> data);
+    byte[] Decode(ReadOnlySpan<byte> encoded);
+}
+```
+
+```csharp
+var watch = Stopwatch.StartNew();
+ArchiveInput[] inputs = coder is null ? files : [.. files.Select(f => f with { Data = coder.Encode(f.Data) })];
+IReadOnlyList<byte[]> volumes = ArchivePipeline.Pack(inputs, options);
+ArchiveResult<IReadOnlyList<ExtractedFile>> unpacked = ArchivePipeline.TryUnpack(volumes, options.Password);
+```
+
+**Прискорення.** Прогноз з контекстом k = 2 залежить лише від двох останніх байтів, тобто від 65 536 можливих пар. Відповідь для кожної пари можна запам'ятати й не запускати мережу вдруге. Функція та сама, тож відновлення не зміниться. Важливо, щоб таблиця була своя в кожного виклику: тоді кожне кодування платить за свої прогнози, час лишається чесним, а спільного стану між потоками немає. Тест має порівняти залишки з прогнозом кожного байта окремо, зокрема на шумі, де трапляються майже всі пари.
+
+```csharp
+public byte Predict(ReadOnlySpan<byte> history)
+{
+    int k = predictor.ContextBytes;
+    if (guesses is null || history.Length < k)
+        return predictor.Predict(history);
+
+    int context = 0;
+    for (int back = 0; back < k; back++)
+        context = context << 8 | history[history.Length - 1 - back];
+    short guess = guesses[context];
+    if (guess < 0)
+        guesses[context] = guess = predictor.Predict(history);
+    return (byte)guess;
+}
+```
+
+**Чого чекати.** Якщо LZ77 + Гаффман уже використовують повтори й частоти, прогноз «найімовірнішого байта» може не дати виграшу в розмірі, а на даних з багатьма різними контекстами коштуватиме помітного часу. Такий результат треба показати по групах і пояснити.
+
+## 15. Адаптивна стратегія всередині одного файлу
+
+**Промпт:**
+
+> На експертному рівні кожен блок файлу має класифікуватися окремо й отримувати свою стратегію. Формат архіву фіксований, а `ArchiveWriter` належить Інтеграції. Як це зробити без зміни формату, як переконатися тестами, що відкинутий блок справді не стискається, і як показати ефект, якщо в датасеті немає змішаних файлів? Дай приклад коду.
+
+**Відповідь:**
+
+**Формат.** Специфікація вже має `block_flags` з бітом `NO_COMPRESSION` для кожного блоку, і читач перевіряє його для кожного блоку окремо. Отже, рішення по блоках записується без нових полів. Тип файлу (`file_type`) і далі визначає аналіз усього файлу, а стратегія файлу дорівнює `Lz77Huffman`, якщо стиснено хоч один блок.
+
+```csharp
+private List<PreparedBlock> CompressBlocksSeparately(byte[] data)
+{
+    List<PreparedBlock> blocks = StoreBlocks(data);
+    for (int i = 0; i < blocks.Count; i++)
+    {
+        byte[] raw = blocks[i].CodedBytes;   // блок ще не стиснений, тож це сирі байти
+        FileAnalysis analysis = Analyzer!.Analyze(raw);
+        if (!Enum.IsDefined(analysis.Strategy))
+            throw new ArchiveException(ErrorCode.E_CODE, $"Аналізатор повернув невідому стратегію: {analysis.Strategy}.");
+        if (analysis.Strategy == CompressionStrategy.NoCompression)
+            continue;
+
+        Lz77PreparedBlock coded = Lz77CompressionService.PrepareFixedBlocks(raw, ParseMode, raw.Length)[0];
+        blocks[i] = new PreparedBlock(i, raw.Length, coded.CodedBytes, coded.IsStored);
+    }
+    return blocks;
+}
+```
+
+**Тест на пропуск.** Блок шуму зберігається як є і після спроби стиснення, тож за результатом пропуск не видно. Потрібен аналізатор, який каже «не стискати» навіть про текст. Тоді пропуск видно в розмірі:
+
+```csharp
+[Fact]
+public void BlockScope_BlockTheAnalyzerRejects_IsNotCompressedEvenIfItWouldShrink()
+{
+    PreparedFile file = Prepare(Text(3 * Block), StrategyScope.Block, new NeverCompress());
+
+    Assert.True(file.Blocks.All(b => b.IsStored));
+    Assert.Equal(3 * Block, file.CodedSize);
+}
+```
+
+**Вимір.** Змішані файли можна зібрати з наявних: вставити вже стиснений файл у середину текстового, як картинку в документ. Порівнювати варто з обома альтернативами: класифікатором на весь файл і стратегією «завжди стискати». Якщо архів і так зберігає без змін блоки без виграшу, «не стискати» економить лише час, а помилка класифікатора на змішаному блоці коштує розміру. Тож результат може бути не на користь нової стратегії, і це треба показати.
+
+## 16. Таблиці звіту «вплив кожного блоку» і «стиснути → зашифрувати»
+
+**Промпт:**
+
+> Для звіту бракує двох обов'язкових таблиць: Q з вимкненим по черзі блоком тракту і порівняння порядку «стиснути → зашифрувати» зі зворотним. Як вимкнути кожен блок, не змінюючи формат архіву, і як чесно порівняти обидва порядки нашим стисненням? Дай приклад коду.
+
+**Відповідь:**
+
+**Вимкнення блоків.** Кожен блок замінюється найпростішою альтернативою, яку формат уже допускає. Аналіз замінюється фіксованою стратегією «завжди стискати», ДП-пакування жадібним, шифрування вимикається записом і читанням томів без AES і HMAC, а стиснення цілком вимикається збереженням усього як є. LZ77 окремо вимикається забороною збігів: кожен байт стає літералом, і дані стискає лише Гаффман. Такий потік є звичайним валідним блоком, тож формат не змінюється. Гаффмана окремо вимкнути не можна, бо формат вимагає його таблиць у кожному стиснутому блоці, і це треба прямо сказати в звіті.
+
+```csharp
+(ArchiveInput[] inputs, PackOptions variant) = stage switch
+{
+    PipelineStage.None => (asIs, options),
+    PipelineStage.Analysis => (withGroup, options with { Analyzer = new FixedStrategy(CompressionStrategy.Lz77Huffman) }),
+    PipelineStage.Lz77 => (asIs, options with { Compression = (options.Compression ?? new Lz77SearchOptions()) with { LiteralsOnly = true } }),
+    PipelineStage.Compression => (withGroup, options with { Analyzer = new FixedStrategy(CompressionStrategy.NoCompression) }),
+    PipelineStage.Packing => (asIs, options with { Algorithm = PackingAlgorithm.Greedy }),
+    _ => (asIs, options),
+};
+```
+
+Час Q на корпусі вимірюється частками секунди, тож один прогін шумний. Потрібні розігрів і медіана з кількох прогонів, а також повторний запуск, щоб переконатися, що зміна Q більша за розкид.
+
+**Порядок стиснення й шифрування.** Обидва порядки треба виконати тим самим кодером і тим самим ключем, а потім відновити й звірити побайтово. Якщо кодер зберігає блоки без виграшу як є, шифрування першим дасть рівно вихідний розмір. Тому варто окремо показати, що робить сам кодер із шифротекстом без цього запасного варіанта: він його збільшує.
+
+```csharp
+IReadOnlyList<Lz77PreparedBlock> compressed = Lz77CompressionService.PrepareFixedBlocks(data, Lz77ParseMode.Lazy, blockSize);
+byte[] sealedData = ArchiveSecurity.TransformCtr(Concat(compressed), key, nonce);
+
+byte[] ciphertext = ArchiveSecurity.TransformCtr(data, key, nonce);
+IReadOnlyList<Lz77PreparedBlock> encryptedFirst = Lz77CompressionService.PrepareFixedBlocks(ciphertext, Lz77ParseMode.Lazy, blockSize);
+IReadOnlyList<Lz77PreparedBlock> coderOnly =
+    Lz77CompressionService.PrepareFixedBlocks(ciphertext, Lz77ParseMode.Lazy, blockSize, allowStored: false);
+```
+
+## 17. Контейнер архіву побайтово за специфікацією
+
+**Промпт:**
+
+> Наш архів не збігається з FORMAT_SPEC_P2: інша нумерація томів, інша розкладка payload і таблиці блоків, лічильник CTR з 0, немає E_SHORT. Через це ми не прочитаємо архіви інших команд. Як привести контейнер до специфікації і як довести, що вийшло побайтово правильно, якщо еталонних файлів ще немає? Дай приклад коду.
+
+**Відповідь:**
+
+**Доказ без еталонних файлів.** Специфікація наводить усі 99 байтів payload контрольного прикладу `ref_01`. З них виходить найсильніший тест: запис має давати ці байти один в один, а читач має відновлювати файл саме з байтів специфікації. Тоді перевіряється і розкладка, і канонічні коди Гаффмана, і порядок полів.
+
+```csharp
+[Fact]
+public void Ref01_PayloadIsReproducedByteForByte()
+{
+    byte[] volume = new ArchiveWriter(analyzer: new Compress()).Build([new ArchiveInput("hello.txt", Hello)]);
+
+    Assert.Equal(Convert.ToHexString(Ref01Payload), Convert.ToHexString(volume.AsSpan(FormatConstants.HeaderSize)));
+}
+```
+
+**Лічильник CTR** перевіряється окремо: перший блок ключового потоку має дорівнювати AES від `nonce || 00000001`.
+
+```csharp
+byte[] keystream = ArchiveSecurity.TransformCtr(new byte[16], key, Nonce);
+
+Assert.Equal(aes.EncryptEcb([.. Nonce, 0, 0, 0, 1], PaddingMode.None), keystream);
+```
+
+**Строгий читач.** Таблиця блоків іде окремо від даних, тож спершу читаються всі записи, а потім сума `coded_len` звіряється з тим, що лишилося в payload. Зайві байти означають `E_PAYLOAD`. Так само відхиляються ненульові `flags` і `reserved` та невідомі біти `block_flags`.
+
+```csharp
+if (dataLength != reader.Remaining)
+    throw new ArchiveException(ErrorCode.E_PAYLOAD,
+        $"Дані блоків займають {dataLength} байт, а після таблиці блоків лишилося {reader.Remaining}.");
+```
+
+**Командні розширення** не повинні вгадуватися з даних, які в чужому архіві випадкові (наприклад, біт солі). Їх треба вмикати явним параметром, щоб звичайне читання завжди йшло строго за специфікацією.
+

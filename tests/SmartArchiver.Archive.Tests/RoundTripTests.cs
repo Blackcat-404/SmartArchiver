@@ -38,7 +38,7 @@ public class RoundTripTests
 
         VolumeHeader header = VolumeHeader.Parse(archive);
 
-        Assert.Equal(1, header.VolumeNumber);
+        Assert.Equal(0, header.VolumeIndex);
         Assert.Equal(1, header.VolumeCount);
         Assert.Equal((uint)(archive.Length - FormatConstants.HeaderSize), header.CiphertextLength);
         Assert.Equal(TestData.ExpectedLength("a.bin", 500, FormatConstants.DefaultBlockSize), archive.Length);

@@ -61,6 +61,90 @@ public class ExperimentStoreTests
     }
 
     [DatabaseFact]
+    public void SaveExperiment_Prediction_IsReadBackUnchanged()
+    {
+        using var database = new TestDatabase();
+        var store = MeasurementStore.Open(database.ConnectionString);
+        Experiment prediction = PredictionExperiment();
+
+        store.SaveExperiment(prediction);
+
+        Assert.Equal(
+            prediction.PredictionResults.Select(r => (r.Group, r.OriginalBytes, r.OriginalEntropy, r.ResidualEntropy,
+                r.EncodedBytes, r.PredictedEncodedBytes, r.ElapsedSeconds)),
+            store.GetExperiment(prediction.Id)!.PredictionResults.OrderBy(r => r.Id).Select(r => (r.Group, r.OriginalBytes,
+                r.OriginalEntropy, r.ResidualEntropy, r.EncodedBytes, r.PredictedEncodedBytes, r.ElapsedSeconds)));
+    }
+
+    [DatabaseFact]
+    public void SaveExperiment_Strategy_IsReadBackUnchanged()
+    {
+        using var database = new TestDatabase();
+        var store = MeasurementStore.Open(database.ConnectionString);
+        Experiment strategy = StrategyExperiment();
+
+        store.SaveExperiment(strategy);
+
+        Assert.Equal(
+            strategy.StrategyResults.Select(r => (r.Group, r.Variant, r.FileCount, r.CompressedFiles, r.OriginalBytes,
+                r.ArchiveBytes, r.PackSeconds, r.UnpackSeconds, r.AllRestored)),
+            store.GetExperiment(strategy.Id)!.StrategyResults.OrderBy(r => r.Id).Select(r => (r.Group, r.Variant,
+                r.FileCount, r.CompressedFiles, r.OriginalBytes, r.ArchiveBytes, r.PackSeconds, r.UnpackSeconds, r.AllRestored)));
+    }
+
+    [DatabaseFact]
+    public void SaveExperiment_GeneticJournal_IsReadBackUnchanged()
+    {
+        using var database = new TestDatabase();
+        var store = MeasurementStore.Open(database.ConnectionString);
+        Experiment genetic = GeneticExperiment();
+
+        store.SaveExperiment(genetic);
+
+        Assert.Equal(
+            genetic.GeneticIndividuals.Select(r => (r.Algorithm, r.Generation, r.Individual, r.GenesJson, r.Fitness, r.S, r.T)),
+            store.GetExperiment(genetic.Id)!.GeneticIndividuals.OrderBy(r => r.Id)
+                .Select(r => (r.Algorithm, r.Generation, r.Individual, r.GenesJson, r.Fitness, r.S, r.T)));
+    }
+
+    [DatabaseFact]
+    public void SaveExperiment_BlockImpactAndEncryptionOrder_AreReadBackUnchanged()
+    {
+        using var database = new TestDatabase();
+        var store = MeasurementStore.Open(database.ConnectionString);
+        Experiment impact = BlockImpactExperiment(), order = EncryptionOrderExperiment();
+
+        store.SaveExperiment(impact);
+        store.SaveExperiment(order);
+
+        Assert.Equal(
+            impact.BlockImpactResults.Select(r => (r.DisabledBlock, r.OriginalBytes, r.ArchiveBytes, r.ElapsedSeconds,
+                r.AllRestored, r.S, r.T, r.Q)),
+            store.GetExperiment(impact.Id)!.BlockImpactResults.OrderBy(r => r.Id).Select(r => (r.DisabledBlock,
+                r.OriginalBytes, r.ArchiveBytes, r.ElapsedSeconds, r.AllRestored, r.S, r.T, r.Q)));
+        Assert.Equal(
+            order.EncryptionOrderResults.Select(r => (r.Group, r.OriginalBytes, r.CompressThenEncryptBytes, r.EncryptThenCompressBytes)),
+            store.GetExperiment(order.Id)!.EncryptionOrderResults.OrderBy(r => r.Id)
+                .Select(r => (r.Group, r.OriginalBytes, r.CompressThenEncryptBytes, r.EncryptThenCompressBytes)));
+    }
+
+    [DatabaseFact]
+    public void SaveExperiment_PredictionQ_IsReadBackUnchanged()
+    {
+        using var database = new TestDatabase();
+        var store = MeasurementStore.Open(database.ConnectionString);
+        Experiment experiment = PredictionQExperiment();
+
+        store.SaveExperiment(experiment);
+
+        Assert.Equal(
+            experiment.PredictionQResults.Select(r => (r.Group, r.Predicted, r.FileCount, r.OriginalBytes, r.ArchiveBytes,
+                r.ElapsedSeconds, r.AllRestored, r.S, r.T, r.Q)),
+            store.GetExperiment(experiment.Id)!.PredictionQResults.OrderBy(r => r.Id).Select(r => (r.Group, r.Predicted,
+                r.FileCount, r.OriginalBytes, r.ArchiveBytes, r.ElapsedSeconds, r.AllRestored, r.S, r.T, r.Q)));
+    }
+
+    [DatabaseFact]
     public void ListExperiments_ReturnsOnlyThatKind_OldestFirst()
     {
         using var database = new TestDatabase();
@@ -122,6 +206,28 @@ public class ExperimentStoreTests
     [InlineData("training zero epochs")]
     [InlineData("training zero learning rate")]
     [InlineData("experiment empty dataset")]
+    [InlineData("prediction group above 6")]
+    [InlineData("prediction entropy above 8")]
+    [InlineData("prediction negative size")]
+    [InlineData("strategy group above 6")]
+    [InlineData("strategy more compressed files than files")]
+    [InlineData("strategy negative time")]
+    [InlineData("genetic negative generation")]
+    [InlineData("genetic negative individual")]
+    [InlineData("genetic S above 1")]
+    [InlineData("genetic negative fitness")]
+    [InlineData("genetic genes not json")]
+    [InlineData("genetic same individual twice")]
+    [InlineData("block impact Q above zero without restore")]
+    [InlineData("block impact T above 1")]
+    [InlineData("block impact same block twice")]
+    [InlineData("block impact unknown block")]
+    [InlineData("encryption order group above 6")]
+    [InlineData("encryption order negative size")]
+    [InlineData("prediction Q group above 6")]
+    [InlineData("prediction Q above zero without restore")]
+    [InlineData("prediction Q S above 1")]
+    [InlineData("prediction Q same group and variant twice")]
     public void SaveExperiment_ValueOutsideConstraint_IsRejected(string violation)
     {
         using var database = new TestDatabase();
@@ -136,10 +242,39 @@ public class ExperimentStoreTests
             "training zero epochs" => With(TrainingExperiment(), e => e.TrainingRuns[0].Epochs = 0),
             "training zero learning rate" => With(TrainingExperiment(), e => e.TrainingRuns[0].LearningRate = 0),
             "experiment empty dataset" => With(TrainingExperiment(), e => e.Dataset = ""),
+            "prediction group above 6" => With(PredictionExperiment(), e => e.PredictionResults[0].Group = 7),
+            "prediction entropy above 8" => With(PredictionExperiment(), e => e.PredictionResults[0].ResidualEntropy = 8.5),
+            "prediction negative size" => With(PredictionExperiment(), e => e.PredictionResults[0].PredictedEncodedBytes = -1),
+            "strategy group above 6" => With(StrategyExperiment(), e => e.StrategyResults[0].Group = 7),
+            "strategy more compressed files than files" => With(StrategyExperiment(), e => e.StrategyResults[0].CompressedFiles = 4),
+            "strategy negative time" => With(StrategyExperiment(), e => e.StrategyResults[0].UnpackSeconds = -0.1),
+            "genetic negative generation" => With(GeneticExperiment(), e => e.GeneticIndividuals[0].Generation = -1),
+            "genetic negative individual" => With(GeneticExperiment(), e => e.GeneticIndividuals[0].Individual = -1),
+            "genetic S above 1" => With(GeneticExperiment(), e => e.GeneticIndividuals[0].S = 1.2),
+            "genetic negative fitness" => With(GeneticExperiment(), e => e.GeneticIndividuals[0].Fitness = -0.1),
+            "genetic genes not json" => With(GeneticExperiment(), e => e.GeneticIndividuals[0].GenesJson = "window=4096"),
+            "genetic same individual twice" => With(GeneticExperiment(), e => e.GeneticIndividuals[1].Individual = 0),
+            "block impact Q above zero without restore" => With(BlockImpactExperiment(), e => e.BlockImpactResults[1].AllRestored = false),
+            "block impact T above 1" => With(BlockImpactExperiment(), e => e.BlockImpactResults[0].T = 1.5),
+            "block impact same block twice" => With(BlockImpactExperiment(), e => e.BlockImpactResults[1].DisabledBlock = PipelineBlock.None),
+            "block impact unknown block" => With(BlockImpactExperiment(), e => e.BlockImpactResults[0].DisabledBlock = (PipelineBlock)42),
+            "encryption order group above 6" => With(EncryptionOrderExperiment(), e => e.EncryptionOrderResults[0].Group = 7),
+            "encryption order negative size" => With(EncryptionOrderExperiment(), e => e.EncryptionOrderResults[0].EncryptThenCompressBytes = -1),
+            "prediction Q group above 6" => With(PredictionQExperiment(), e => e.PredictionQResults[0].Group = 7),
+            "prediction Q above zero without restore" => With(PredictionQExperiment(), e => e.PredictionQResults[1].AllRestored = false),
+            "prediction Q S above 1" => With(PredictionQExperiment(), e => e.PredictionQResults[0].S = 1.1),
+            "prediction Q same group and variant twice" => With(PredictionQExperiment(), e => e.PredictionQResults[1].Predicted = false),
             _ => throw new ArgumentOutOfRangeException(nameof(violation)),
         };
 
         Assert.Throws<DatabaseException>(() => store.SaveExperiment(experiment));
+
+        // One transaction: the experiment and the results that were valid are rolled back too.
+        Assert.Empty(store.ListExperiments(experiment.Kind));
+        using var db = database.CreateContext();
+        Assert.Equal(0, db.ParsingResults.Count() + db.PackingResults.Count() + db.TrainingRuns.Count()
+            + db.PredictionResults.Count() + db.StrategyResults.Count() + db.GeneticIndividuals.Count()
+            + db.BlockImpactResults.Count() + db.EncryptionOrderResults.Count() + db.PredictionQResults.Count());
     }
 
     [DatabaseTheory]
@@ -175,6 +310,11 @@ public class ExperimentStoreTests
         }
 
         Assert.Throws<DatabaseException>(() => store.SaveRun(run));
+
+        // The run and its files are saved together or not at all.
+        Assert.Equal(0, store.CountRuns());
+        using var db = database.CreateContext();
+        Assert.Equal(0, db.MeasurementFileResults.Count());
     }
 
     private static Experiment With(Experiment experiment, Action<Experiment> change)
@@ -212,6 +352,76 @@ public class ExperimentStoreTests
         [
             new() { Method = PackingMethod.Dp, VolumeIndex = 0, CapacityBytes = 65_000, UsedBytes = 64_950, TotalValue = 37.5, BlockCount = 12, ElapsedSeconds = 0.8 },
             new() { Method = PackingMethod.Greedy, VolumeIndex = 0, CapacityBytes = 65_000, UsedBytes = 61_200, TotalValue = 33, BlockCount = 11, ElapsedSeconds = 0.01 },
+        ];
+        return e;
+    }
+
+    private static Experiment StrategyExperiment()
+    {
+        Experiment e = NewExperiment(ExperimentKind.Strategy);
+        e.StrategyResults =
+        [
+            new() { Group = 0, Variant = StrategyVariant.Stored, FileCount = 3, CompressedFiles = 0, OriginalBytes = 150_000, ArchiveBytes = 150_400, PackSeconds = 0.01, UnpackSeconds = 0.01, AllRestored = true },
+            new() { Group = 0, Variant = StrategyVariant.Fixed, FileCount = 3, CompressedFiles = 3, OriginalBytes = 150_000, ArchiveBytes = 48_000, PackSeconds = 0.4, UnpackSeconds = 0.05, AllRestored = true },
+            new() { Group = 5, Variant = StrategyVariant.Classifier, FileCount = 3, CompressedFiles = 0, OriginalBytes = 76_000, ArchiveBytes = 76_300, PackSeconds = 0.02, UnpackSeconds = 0.01, AllRestored = true },
+            new() { Group = 5, Variant = StrategyVariant.ClassifierPerBlock, FileCount = 3, CompressedFiles = 1, OriginalBytes = 76_000, ArchiveBytes = 70_100, PackSeconds = 0.03, UnpackSeconds = 0.01, AllRestored = true },
+        ];
+        return e;
+    }
+
+    private static Experiment GeneticExperiment()
+    {
+        Experiment e = NewExperiment(ExperimentKind.Genetic);
+        e.GeneticIndividuals =
+        [
+            new() { Algorithm = SearchAlgorithm.Genetic, Generation = 0, Individual = 0, GenesJson = """{"window":4096,"min_match":3,"no_compress_threshold":7.5}""", Fitness = 0.61, S = 0.72, T = 0.5 },
+            new() { Algorithm = SearchAlgorithm.Genetic, Generation = 0, Individual = 1, GenesJson = """{"window":1024,"min_match":4,"no_compress_threshold":7.9}""", Fitness = 0.58, S = 0.66, T = 0.5 },
+            new() { Algorithm = SearchAlgorithm.Random, Generation = 0, Individual = 0, GenesJson = """{"window":256,"min_match":5,"no_compress_threshold":6}""", Fitness = 0.4, S = 0.3, T = 0.5 },
+        ];
+        return e;
+    }
+
+    private static Experiment BlockImpactExperiment()
+    {
+        Experiment e = NewExperiment(ExperimentKind.BlockImpact);
+        e.BlockImpactResults =
+        [
+            new() { DisabledBlock = PipelineBlock.None, OriginalBytes = 930_000, ArchiveBytes = 200_000, ElapsedSeconds = 1.2, AllRestored = true, S = 0.82, T = 0.45, Q = 0.64 },
+            new() { DisabledBlock = PipelineBlock.Lz77, OriginalBytes = 930_000, ArchiveBytes = 600_000, ElapsedSeconds = 0.6, AllRestored = true, S = 0.61, T = 0.62, Q = 0.62 },
+            new() { DisabledBlock = PipelineBlock.Encryption, OriginalBytes = 930_000, ArchiveBytes = 199_900, ElapsedSeconds = 0.4, AllRestored = true, S = 0.82, T = 0.71, Q = 0.77 },
+        ];
+        return e;
+    }
+
+    private static Experiment EncryptionOrderExperiment()
+    {
+        Experiment e = NewExperiment(ExperimentKind.EncryptionOrder);
+        e.EncryptionOrderResults =
+        [
+            new() { Group = 0, OriginalBytes = 156_000, CompressThenEncryptBytes = 4_200, EncryptThenCompressBytes = 156_400 },
+            new() { Group = 5, OriginalBytes = 76_000, CompressThenEncryptBytes = 76_300, EncryptThenCompressBytes = 76_300 },
+        ];
+        return e;
+    }
+
+    private static Experiment PredictionQExperiment()
+    {
+        Experiment e = NewExperiment(ExperimentKind.PredictionQ);
+        e.PredictionQResults =
+        [
+            new() { Group = 0, Predicted = false, FileCount = 3, OriginalBytes = 156_000, ArchiveBytes = 4_400, ElapsedSeconds = 0.3, AllRestored = true, S = 0.97, T = 0.77, Q = 0.87 },
+            new() { Group = 0, Predicted = true, FileCount = 3, OriginalBytes = 156_000, ArchiveBytes = 5_600, ElapsedSeconds = 0.35, AllRestored = true, S = 0.97, T = 0.74, Q = 0.85 },
+        ];
+        return e;
+    }
+
+    private static Experiment PredictionExperiment()
+    {
+        Experiment e = NewExperiment(ExperimentKind.Prediction);
+        e.PredictionResults =
+        [
+            new() { Group = 0, OriginalBytes = 40_000, OriginalEntropy = 4.7, ResidualEntropy = 3.9, EncodedBytes = 16_000, PredictedEncodedBytes = 15_200, ElapsedSeconds = 0.3 },
+            new() { Group = 5, OriginalBytes = 18_000, OriginalEntropy = 7.99, ResidualEntropy = 7.99, EncodedBytes = 18_000, PredictedEncodedBytes = 18_008, ElapsedSeconds = 0.2 },
         ];
         return e;
     }

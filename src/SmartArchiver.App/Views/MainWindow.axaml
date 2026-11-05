@@ -1,22 +1,135 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="using:SmartArchiver.App.ViewModels"
-        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
-        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-        mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
         x:Class="SmartArchiver.App.Views.MainWindow"
         x:DataType="vm:MainViewModel"
         Icon="/Assets/avalonia-logo.ico"
-        Title="SmartArchiver.App">
+        Title="SmartArchiver"
+        Width="1000" Height="680" MinWidth="760" MinHeight="480">
 
-    <Design.DataContext>
-        <!-- This only sets the DataContext for the previewer in an IDE,
-             to set the actual DataContext for runtime, set the DataContext property in code (look at App.axaml.cs) -->
-        <vm:MainViewModel />
-    </Design.DataContext>
+    <Window.Styles>
+        <Style Selector="SelectableTextBlock.mono">
+            <Setter Property="FontFamily" Value="Cascadia Mono, Consolas, DejaVu Sans Mono, Liberation Mono, monospace" />
+            <Setter Property="FontSize" Value="13" />
+        </Style>
+        <Style Selector="ListBox.mono">
+            <Setter Property="FontFamily" Value="Cascadia Mono, Consolas, DejaVu Sans Mono, Liberation Mono, monospace" />
+            <Setter Property="FontSize" Value="13" />
+        </Style>
+        <Style Selector="TextBlock.status">
+            <Setter Property="TextWrapping" Value="Wrap" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+        </Style>
+        <Style Selector="TextBlock.label">
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+    </Window.Styles>
 
-    <TextBox Text="{Binding Greeting}"
-             HorizontalAlignment="Center"
-             VerticalAlignment="Center" />
+    <TabControl Margin="8">
 
+        <!-- ============================================================ pack -->
+        <TabItem Header="Запакувати" DataContext="{Binding Pack}" x:DataType="vm:PackViewModel">
+            <Grid RowDefinitions="Auto,*,Auto,Auto,Auto,*" Margin="4">
+                <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,0,0,6">
+                    <Button Content="Додати файли…" Click="AddPackFiles" />
+                    <Button Content="Прибрати вибраний" Command="{Binding RemoveSelectedCommand}" />
+                    <Button Content="Очистити" Command="{Binding ClearFilesCommand}" />
+                </StackPanel>
+                <ListBox Grid.Row="1" ItemsSource="{Binding Files}" SelectedItem="{Binding SelectedFile}" MinHeight="90" />
+
+                <Grid Grid.Row="2" ColumnDefinitions="Auto,*,Auto,*" RowDefinitions="Auto,Auto,Auto" Margin="0,8,0,0">
+                    <TextBlock Classes="label" Text="Пароль" Margin="0,0,8,0" />
+                    <TextBox Grid.Column="1" PasswordChar="•" Text="{Binding Password}" />
+                    <TextBlock Grid.Column="2" Classes="label" Text="Повтор пароля" Margin="12,0,8,0" />
+                    <TextBox Grid.Column="3" PasswordChar="•" Text="{Binding PasswordAgain}" />
+
+                    <TextBlock Grid.Row="1" Classes="label" Text="Розмір тому, Б" Margin="0,6,8,0" />
+                    <TextBox Grid.Row="1" Grid.Column="1" Margin="0,6,0,0" Text="{Binding VolumeSize}"
+                             PlaceholderText="0 = один том" />
+
+                    <TextBlock Grid.Row="2" Classes="label" Text="Архів" Margin="0,6,8,0" />
+                    <TextBox Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,6,8,0" Text="{Binding ArchivePath}" />
+                    <Button Grid.Row="2" Grid.Column="3" Margin="0,6,0,0" Content="Зберегти як…" Click="ChooseArchiveToWrite" />
+                </Grid>
+
+                <Button Grid.Row="3" Margin="0,10,0,0" Content="Запакувати" Command="{Binding PackCommand}" />
+                <TextBlock Grid.Row="4" Classes="status" Margin="0,8" Text="{Binding Status}" />
+                <ListBox Grid.Row="5" Classes="mono" ItemsSource="{Binding Result}" />
+            </Grid>
+        </TabItem>
+
+        <!-- ============================================================ unpack -->
+        <TabItem Header="Розпакувати" DataContext="{Binding Unpack}" x:DataType="vm:UnpackViewModel">
+            <Grid RowDefinitions="Auto,Auto,Auto,*" Margin="4">
+                <Grid ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto,Auto,Auto">
+                    <TextBlock Classes="label" Text="Архів або будь-який том" Margin="0,0,8,0" />
+                    <TextBox Grid.Column="1" Text="{Binding ArchivePath}" />
+                    <Button Grid.Column="2" Margin="8,0,0,0" Content="Обрати…" Click="ChooseArchiveToRead" />
+
+                    <TextBlock Grid.Row="1" Classes="label" Text="Пароль" Margin="0,6,8,0" />
+                    <TextBox Grid.Row="1" Grid.Column="1" Margin="0,6,0,0" PasswordChar="•" Text="{Binding Password}" />
+
+                    <TextBlock Grid.Row="2" Classes="label" Text="Тека для файлів" Margin="0,6,8,0" />
+                    <TextBox Grid.Row="2" Grid.Column="1" Margin="0,6,0,0" Text="{Binding OutputFolder}" />
+                    <Button Grid.Row="2" Grid.Column="2" Margin="8,6,0,0" Content="Обрати…" Click="ChooseOutputFolder" />
+                </Grid>
+                <Button Grid.Row="1" Margin="0,10,0,0" Content="Розпакувати" Command="{Binding UnpackCommand}" />
+                <TextBlock Grid.Row="2" Classes="status" Margin="0,8" Text="{Binding Status}" />
+                <ListBox Grid.Row="3" Classes="mono" ItemsSource="{Binding Result}" />
+            </Grid>
+        </TabItem>
+
+        <!-- ============================================================ analysis -->
+        <TabItem Header="Аналіз файлу" DataContext="{Binding Analyze}" x:DataType="vm:AnalyzeViewModel">
+            <Grid RowDefinitions="Auto,Auto,Auto,Auto,*" Margin="4">
+                <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+                    <TextBlock Classes="label" Text="Файл" Margin="0,0,8,0" />
+                    <TextBox Grid.Column="1" Text="{Binding FilePath}" />
+                    <Button Grid.Column="2" Margin="8,0,0,0" Content="Обрати…" Click="ChooseFileToAnalyze" />
+                    <Button Grid.Column="3" Margin="8,0,0,0" Content="Аналізувати" Command="{Binding AnalyzeCommand}" />
+                </Grid>
+                <TextBlock Grid.Row="1" Classes="status" Margin="0,8" Text="{Binding Status}" />
+                <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="8">
+                    <TextBlock Text="Тип за класифікатором:" />
+                    <TextBlock FontWeight="Bold" Text="{Binding Kind}" />
+                </StackPanel>
+                <StackPanel Grid.Row="3" Orientation="Horizontal" Spacing="8" Margin="0,4,0,8">
+                    <TextBlock Text="Стратегія стиснення:" />
+                    <TextBlock FontWeight="Bold" Text="{Binding Strategy}" />
+                </StackPanel>
+                <ListBox Grid.Row="4" Classes="mono" ItemsSource="{Binding Features}" />
+            </Grid>
+        </TabItem>
+
+        <!-- ============================================================ history -->
+        <TabItem Header="Історія архівацій" DataContext="{Binding History}" x:DataType="vm:HistoryViewModel">
+            <Grid RowDefinitions="Auto,Auto,*" Margin="4">
+                <Button Content="Оновити" Command="{Binding RefreshCommand}" />
+                <TextBlock Grid.Row="1" Classes="status" Margin="0,8" Text="{Binding Status}" />
+                <ListBox Grid.Row="2" Classes="mono" ItemsSource="{Binding Rows}" />
+            </Grid>
+        </TabItem>
+
+        <!-- ============================================================ experiments -->
+        <TabItem Header="Експерименти" DataContext="{Binding Experiments}" x:DataType="vm:ExperimentsViewModel">
+            <Grid RowDefinitions="Auto,Auto,*" Margin="4">
+                <Button Content="Оновити" Command="{Binding RefreshCommand}" />
+                <TextBlock Grid.Row="1" Classes="status" Margin="0,8" Text="{Binding Status}" />
+                <ScrollViewer Grid.Row="2" HorizontalScrollBarVisibility="Auto">
+                    <ItemsControl ItemsSource="{Binding Tables}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="vm:ReportTableView">
+                                <StackPanel Margin="0,0,0,16">
+                                    <TextBlock FontWeight="Bold" FontSize="15" Text="{Binding Title}" />
+                                    <TextBlock Opacity="0.7" Margin="0,2,0,4" Text="{Binding Source}" />
+                                    <SelectableTextBlock Classes="mono" Text="{Binding Text}" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+            </Grid>
+        </TabItem>
+
+    </TabControl>
 </Window>

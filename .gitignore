@@ -430,3 +430,6 @@ FodyWeavers.xsd
 
 # Personal database connection strings (see README)
 appsettings.Local.json
+
+# Coverage report from CI
+CoverageReport/

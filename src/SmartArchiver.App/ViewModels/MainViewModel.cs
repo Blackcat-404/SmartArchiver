@@ -1,9 +1,15 @@
-using CommunityToolkit.Mvvm.ComponentModel;
-
 namespace SmartArchiver.App.ViewModels;
 
-public partial class MainViewModel : ViewModelBase
+/// <summary>The window: one tab per screen.</summary>
+public sealed class MainViewModel : ViewModelBase
 {
-    [ObservableProperty]
-    public partial string Greeting { get; set; } = "Welcome to Avalonia!";
+    public PackViewModel Pack { get; } = new();
+
+    public UnpackViewModel Unpack { get; } = new();
+
+    public AnalyzeViewModel Analyze { get; } = new();
+
+    public HistoryViewModel History { get; } = new();
+
+    public ExperimentsViewModel Experiments { get; } = new();
 }
