@@ -100,6 +100,7 @@ internal static class ArchiveFiles
         ErrorCode.E_CRC => "E_CRC: контрольна сума файлу не збіглася.",
         ErrorCode.E_VOLUMES => "E_VOLUMES: набір томів неповний, з дублікатами або з різних архівів.",
         ErrorCode.E_CAPACITY => "E_CAPACITY: блок не вміщується в том, збільште розмір тому.",
+        ErrorCode.E_SHORT => "E_SHORT: том коротший за 73 байти, це не том SmartArchiver або він обрізаний.",
         _ => code.ToString(),
     };
 

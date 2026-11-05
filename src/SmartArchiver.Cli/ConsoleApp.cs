@@ -409,7 +409,7 @@ internal static class ConsoleApp
         {
             Kind = ExperimentKind.Parsing,
             StartedAtUtc = DateTime.UtcNow,
-            Dataset = Path.GetFullPath(datasetPath),
+            Dataset = DatasetName(datasetPath),
             ParametersJson = JsonSerializer.Serialize(new
             {
                 blockSize = ParsingComparisonRunner.BlockSize,
@@ -559,7 +559,7 @@ internal static class ConsoleApp
         {
             Kind = ExperimentKind.Packing,
             StartedAtUtc = DateTime.UtcNow,
-            Dataset = Path.GetFullPath(datasetPath),
+            Dataset = DatasetName(datasetPath),
             ParametersJson = JsonSerializer.Serialize(new
             {
                 maxVolumeBytes,
@@ -1750,7 +1750,7 @@ internal static class ConsoleApp
         {
             Kind = ExperimentKind.Prediction,
             StartedAtUtc = DateTime.UtcNow,
-            Dataset = Path.GetFullPath(datasetPath),
+            Dataset = DatasetName(datasetPath),
             ParametersJson = JsonSerializer.Serialize(new
             {
                 model = predictor.ModelId.ToString("X16", c),
@@ -1858,7 +1858,7 @@ internal static class ConsoleApp
         {
             Kind = ExperimentKind.Training,
             StartedAtUtc = DateTime.UtcNow,
-            Dataset = Path.GetFullPath(datasetPath),
+            Dataset = DatasetName(datasetPath),
             ParametersJson = JsonSerializer.Serialize(new
             {
                 chunkSize = LabeledDataset.DefaultChunkSize,
@@ -1972,7 +1972,7 @@ internal static class ConsoleApp
         {
             Kind = ExperimentKind.Parsing,
             StartedAtUtc = startedAtUtc,
-            Dataset = Path.GetFullPath(dataset),
+            Dataset = DatasetName(dataset),
 
             ParametersJson = JsonSerializer.Serialize(new
             {
@@ -2418,6 +2418,7 @@ private static void RunZip9Bonus(string dataset)
             ErrorCode.E_CRC => "вміст файлу змінено: CRC32 не збігається",
             ErrorCode.E_VOLUMES => "набір томів неповний, містить дублікати або томи з різних архівів",
             ErrorCode.E_CAPACITY => "блок не вміщується в том: збільште розмір тому або зменште розмір блока",
+            ErrorCode.E_SHORT => "том коротший за 73 байти: це не том SmartArchiver або він обрізаний",
             _ => "помилка архіву",
         };
         return $"[ПОМИЛКА] {ex.Code}: {meaning}.{Environment.NewLine}  Деталі: {ex.Message}";
