@@ -460,7 +460,7 @@ internal static class ConsoleApp
     /// <summary>Розмір блока в експерименті: щоб блок (до 16 КіБ + 15 байт) влазив у том навіть невеликої місткості.</summary>
     private const int PackingBlockSize = 16_384;
 
-    /// <summary>Місткість тому за замовчуванням, поки немає team_config.json: корпус займає кілька томів.</summary>
+    /// <summary>Місткість тому в досліді, якщо її не вказано в команді: корпус займає кілька томів.</summary>
     private const long DefaultPackingVolumeBytes = 65_536;
 
     private static void PackExperimentCommand(string[] args)
@@ -497,13 +497,9 @@ internal static class ConsoleApp
     private static void RunPackingExperiment(string datasetPath, long maxVolumeBytes, string? configPath)
     {
         CultureInfo c = CultureInfo.InvariantCulture;
-        PackingPriorities priorities = PackingPriorities.Default;
-        if (configPath is not null)
-        {
-            TeamConfig config = TeamConfig.Load(configPath);
-            maxVolumeBytes = config.MaxVolumeBytes;
-            priorities = config.Priorities;
-        }
+        // Пріоритети з team_config.json; місткість тому — параметр досліду з команди (на одному великому томі нема з чого вибирати).
+        (TeamConfig config, string configSource) = LoadTeamConfig(configPath);
+        PackingPriorities priorities = config.Priorities;
 
         (List<ArchiveInput> inputs, _) = LoadCorpus(datasetPath);
 
@@ -519,10 +515,7 @@ internal static class ConsoleApp
         Console.WriteLine(string.Format(c, "  Файлів: {0}, блоків: {1}, вихідний обсяг: {2} байт, після стиснення: {3} байт, місткість тому: {4} байт",
             prepared.Count, blockCount, originalBytes, codedBytes, maxVolumeBytes));
         Console.WriteLine($"  Вага блока = coded_len + {FormatConstants.BlockHeaderSize} байт, цінність за типом файлу: {string.Join(", ", priorities.Values)} (типи 0..6)");
-        if (configPath is null)
-        {
-            Write("  [УВАГА] Пріоритети типів стандартні (заглушка): справжні задає team_config.json (4-й параметр команди).", ConsoleColor.Yellow);
-        }
+        Console.WriteLine($"  Пріоритети: {configSource}");
 
         Console.WriteLine();
         Console.WriteLine($"  {"Том",4} {"Метод",-7} {"Блоків",7} {"Використано",12} {"Місткість W",12} {"Цінність",9} {"Час, мс",9}");
@@ -567,8 +560,8 @@ internal static class ConsoleApp
                 parseMode = "Lazy",
                 weight = "coded_len + 15",
                 priorities = priorities.Values,
-                prioritiesSource = configPath is null ? "default placeholder" : Path.GetFileName(configPath),
-                capacity = "max_volume_bytes - 41 - 32 - 4 - file table of the volume",
+                prioritiesSource = configSource,
+                capacity = "max_volume_bytes - 41 - 32 - 6 - file table of the volume",
             }),
         };
         AddPackingResults(experiment, comparison.Dp, PackingMethod.Dp);
@@ -617,8 +610,34 @@ internal static class ConsoleApp
     // Вимір Q на всьому корпусі
     // ------------------------------------------------------------------
 
-    /// <summary>Місткість тому для виміру, поки в team_config.json немає max_volume_bytes: корпус займає кілька томів.</summary>
+    /// <summary>Місткість тому, якщо team_config.json не знайдено (те саме значення, що в командному файлі).</summary>
     private const long DefaultMeasureVolumeBytes = 262_144;
+
+    /// <summary>
+    /// Параметри команди: файл, указаний у команді, інакше team_config.json у поточній теці або вище від програми
+    /// (командний файл лежить у корені репозиторію), інакше вбудовані значення, такі самі, як у командному файлі.
+    /// </summary>
+    private static (TeamConfig Config, string Source) LoadTeamConfig(string? path)
+    {
+        string? file = path ?? FindTeamConfig();
+        return file is null
+            ? (new TeamConfig(DefaultMeasureVolumeBytes, PackingPriorities.Default), "вбудовані значення")
+            : (TeamConfig.Load(file), Path.GetFileName(file));
+    }
+
+    private static string? FindTeamConfig()
+    {
+        const string name = "team_config.json";
+        if (File.Exists(name))
+            return Path.GetFullPath(name);
+        for (DirectoryInfo? dir = new(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
+        {
+            string candidate = Path.Combine(dir.FullName, name);
+            if (File.Exists(candidate))
+                return candidate;
+        }
+        return null;
+    }
 
     /// <summary>Пароль виміру. Це не секрет: вимір не зберігає архіви, а пароль не потрапляє ні в базу, ні в логи.</summary>
     private const string MeasurementPassword = "algo2026";
@@ -628,7 +647,7 @@ internal static class ConsoleApp
         string? dataset = Prompt("Каталог із групами 0..6", "Datasets");
         if (dataset is null)
             return;
-        string? config = Prompt("team_config.json (Enter = стандартні α, β, t_ref і місткість)", "");
+        string? config = Prompt("team_config.json (Enter = командний team_config.json)", "");
         MeasureQ(dataset, string.IsNullOrEmpty(config) ? null : config);
     }
 
@@ -639,9 +658,7 @@ internal static class ConsoleApp
     private static void MeasureQ(string datasetPath, string? configPath)
     {
         CultureInfo c = CultureInfo.InvariantCulture;
-        TeamConfig config = configPath is null
-            ? new TeamConfig(DefaultMeasureVolumeBytes, PackingPriorities.Default)
-            : TeamConfig.Load(configPath);
+        (TeamConfig config, string configSource) = LoadTeamConfig(configPath);
         (List<ArchiveInput> inputs, List<byte> groups) = LoadCorpus(datasetPath);
         var options = new PackOptions(MeasurementPassword, new FileAnalyzer(), MaxVolumeBytes: config.MaxVolumeBytes, Priorities: config.Priorities);
 
@@ -659,10 +676,7 @@ internal static class ConsoleApp
         Console.WriteLine(string.Format(c, "  B_orig {0} Б, B_arc {1} Б у {2} том(ах), t {3:F3} с", m.OriginalBytes, m.ArchiveBytes, m.Volumes, m.Seconds));
         Console.WriteLine(string.Format(c, "  S = {0:F4}, T = {1:F4}, Q = {2:F4}  (α = {3}, β = {4}, t_ref = {5} с)",
             m.Score.S, m.Score.T, m.Score.Q, config.Alpha, config.Beta, config.TRefSeconds));
-        if (configPath is null)
-        {
-            Write("  [УВАГА] α, β, t_ref і місткість тому стандартні (заглушка): справжні задає team_config.json (2-й параметр команди).", ConsoleColor.Yellow);
-        }
+        Console.WriteLine($"  Параметри: {configSource}");
         if (m.AllRestored)
         {
             Write("[OK] Усі файли відновлено побайтово.", ConsoleColor.Green);
@@ -695,7 +709,7 @@ internal static class ConsoleApp
                 packing = "DP knapsack",
                 parseMode = "Lazy",
                 encryption = "AES-256-CTR + HMAC-SHA256, PBKDF2 once per archive",
-                config = configPath is null ? "defaults (placeholder)" : Path.GetFileName(configPath),
+                config = configSource,
             }),
             OriginalBytes = m.OriginalBytes,
             ArchiveBytes = m.ArchiveBytes,
@@ -1142,9 +1156,7 @@ internal static class ConsoleApp
     private static void RunGeneticExperiment(string datasetPath, string? configPath, bool full)
     {
         CultureInfo c = CultureInfo.InvariantCulture;
-        TeamConfig config = configPath is null
-            ? new TeamConfig(DefaultMeasureVolumeBytes, PackingPriorities.Default)
-            : TeamConfig.Load(configPath);
+        (TeamConfig config, string configSource) = LoadTeamConfig(configPath);
         (List<ArchiveInput> inputs, List<byte> groups) = LoadCorpus(datasetPath);
         var corpus = inputs.Select((input, index) => (input, groups[index])).ToList();
         var baseOptions = new PackOptions(
@@ -1378,9 +1390,7 @@ internal static class ConsoleApp
     private static void RunPredictionQ(string datasetPath, string? configPath)
     {
         CultureInfo c = CultureInfo.InvariantCulture;
-        TeamConfig config = configPath is null
-            ? new TeamConfig(DefaultMeasureVolumeBytes, PackingPriorities.Default)
-            : TeamConfig.Load(configPath);
+        (TeamConfig config, string configSource) = LoadTeamConfig(configPath);
         (List<ArchiveInput> inputs, List<byte> groups) = LoadCorpus(datasetPath);
         IReadOnlyList<GroupedFile> files = [.. inputs.Select((input, i) => new GroupedFile(groups[i], input))];
         var options = new PackOptions(MeasurementPassword, new FileAnalyzer(), MaxVolumeBytes: config.MaxVolumeBytes, Priorities: config.Priorities);
@@ -1403,8 +1413,7 @@ internal static class ConsoleApp
         }
         Console.WriteLine(string.Format(c, "  α = {0}, β = {1}, t_ref = {2} с; час: медіана з {3} прогонів після розігріву",
             config.Alpha, config.Beta, config.TRefSeconds, repeats));
-        if (configPath is null)
-            Write("  [УВАГА] α, β, t_ref і місткість тому стандартні (заглушка): справжні задає team_config.json.", ConsoleColor.Yellow);
+        Console.WriteLine($"  Параметри: {configSource}");
         if (results.All(r => r.AllRestored))
             Write("[OK] Усі файли відновлено побайтово в обох варіантах.", ConsoleColor.Green);
         else
@@ -1424,7 +1433,7 @@ internal static class ConsoleApp
                 beta = config.Beta,
                 tRefSeconds = config.TRefSeconds,
                 maxVolumeBytes = config.MaxVolumeBytes,
-                config = configPath is null ? "defaults (placeholder)" : Path.GetFileName(configPath),
+                config = configSource,
                 repeats,
                 pipeline = "analysis on residuals, LZ77 + Huffman, DP knapsack, AES-256-CTR + HMAC-SHA256",
             }),
@@ -1475,9 +1484,9 @@ internal static class ConsoleApp
     private static void RunBlockImpact(string datasetPath, string? configPath)
     {
         CultureInfo c = CultureInfo.InvariantCulture;
-        TeamConfig config = configPath is null
-            ? new TeamConfig(BlockImpactVolumeBytes, PackingPriorities.Default)
-            : TeamConfig.Load(configPath);
+        // α, β, t_ref і пріоритети з team_config.json; розмір тому — параметр самого досліду (див. BlockImpactVolumeBytes).
+        (TeamConfig loaded, string configSource) = LoadTeamConfig(configPath);
+        TeamConfig config = loaded with { MaxVolumeBytes = BlockImpactVolumeBytes };
         (List<ArchiveInput> inputs, List<byte> groups) = LoadCorpus(datasetPath);
         IReadOnlyList<GroupedFile> corpus = [.. inputs.Select((input, i) => new GroupedFile(groups[i], input))];
         var options = new PackOptions(MeasurementPassword, new FileAnalyzer(), MaxVolumeBytes: config.MaxVolumeBytes, Priorities: config.Priorities);
@@ -1499,8 +1508,7 @@ internal static class ConsoleApp
         }
         Console.WriteLine(string.Format(c, "  α = {0}, β = {1}, t_ref = {2} с; час: медіана з {3} прогонів після розігріву",
             config.Alpha, config.Beta, config.TRefSeconds, repeats));
-        if (configPath is null)
-            Write("  [УВАГА] α, β, t_ref і пріоритети стандартні (заглушка): справжні задає team_config.json.", ConsoleColor.Yellow);
+        Console.WriteLine($"  Параметри: {configSource}, том {BlockImpactVolumeBytes} байт (параметр досліду)");
 
         var experiment = new Experiment
         {
@@ -1514,7 +1522,7 @@ internal static class ConsoleApp
                 beta = config.Beta,
                 tRefSeconds = config.TRefSeconds,
                 maxVolumeBytes = config.MaxVolumeBytes,
-                config = configPath is null ? "defaults (placeholder)" : Path.GetFileName(configPath),
+                config = configSource,
                 repeats,
                 notMeasured = "Huffman alone (the format requires Huffman tables), Prediction (not part of the pipeline)",
             }),

@@ -70,4 +70,25 @@ public class TeamConfigTests
 
         Assert.Throws<ArgumentException>(() => TeamConfig.Parse(json));
     }
+
+    [Fact]
+    public void TeamConfigOfTheRepository_Parses_AndMatchesTheBuiltInDefaults()
+    {
+        // The CLI falls back to built-in values when team_config.json is not found; both must stay the same.
+        string? path = null;
+        for (DirectoryInfo? dir = new(AppContext.BaseDirectory); dir is not null && path is null; dir = dir.Parent)
+        {
+            string candidate = Path.Combine(dir.FullName, "team_config.json");
+            if (File.Exists(candidate))
+                path = candidate;
+        }
+        Assert.NotNull(path);
+
+        TeamConfig config = TeamConfig.Load(path);
+
+        var defaults = new TeamConfig(262_144, PackingPriorities.Default);
+        Assert.Equal((defaults.MaxVolumeBytes, defaults.Alpha, defaults.Beta, defaults.TRefSeconds),
+            (config.MaxVolumeBytes, config.Alpha, config.Beta, config.TRefSeconds));
+        Assert.Equal(PackingPriorities.Default.Values, config.Priorities.Values);
+    }
 }

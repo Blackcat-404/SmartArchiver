@@ -14,8 +14,8 @@ public sealed class PackingPriorities
     private readonly long[] _values;
 
     /// <summary>
-    /// Значення за замовчуванням, поки немає справжнього team_config.json: текст і код важливіші за стиснені дані.
-    /// Це ЗАГЛУШКА: справжні числа однакові для всіх команд і беруться з team_config.json (<see cref="TeamConfig"/>).
+    /// Командні пріоритети (ті самі, що в team_config.json у корені репозиторію): текст і код важливіші за стиснені дані,
+    /// бо їхня втрата на пізніх томах дошкульніша, а стиснені дані найменше виграють від пакування.
     /// </summary>
     public static PackingPriorities Default { get; } = new([5, 5, 4, 3, 3, 2, 1]);
 
@@ -80,8 +80,8 @@ public sealed class PackingPriorities
 
 /// <summary>
 /// Параметри з team_config.json: місткість тому, пріоритети типів і ваги метрики Q.
-/// Alpha, Beta і TRefSeconds (ключі alpha, beta, t_ref) необов'язкові; значення за замовчуванням це ЗАГЛУШКИ,
-/// справжні числа однакові для всіх команд і беруться з team_config.json.
+/// Alpha, Beta і TRefSeconds (ключі alpha, beta, t_ref) необов'язкові; за замовчуванням вони такі самі,
+/// як у командному team_config.json (рішення 52).
 /// </summary>
 public sealed record TeamConfig(
     long MaxVolumeBytes,
@@ -91,8 +91,8 @@ public sealed record TeamConfig(
     double TRefSeconds = 1.0)
 {
     /// <summary>
-    /// Читає max_volume_bytes і пріоритети_типів, а також alpha, beta, t_ref, якщо вони є. Точну форму файлу команді не надали,
-    /// тому пріоритети приймаються і масивом, і об'єктом (див. <see cref="PackingPriorities.FromJson"/>).
+    /// Читає max_volume_bytes і пріоритети_типів, а також alpha, beta, t_ref, якщо вони є. Інші ключі ігноруються.
+    /// Пріоритети приймаються і масивом, і об'єктом (див. <see cref="PackingPriorities.FromJson"/>).
     /// </summary>
     public static TeamConfig Parse(string json)
     {

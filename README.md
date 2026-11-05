@@ -63,9 +63,9 @@ dotnet run --project src/SmartArchiver.Cli -- genetic-experiment Datasets [team_
 
 Оптимізація (kycile24) — генетичний/випадковий/локальний пошук, повна функція пристосованості `Q` і фронт Парето — описана в [docs/optimization.md](docs/optimization.md).
 
-Чекпоінт 3: `pack` і `unpack` проходять повний тракт **аналіз → блоки → LZ77 → Гаффман → пакування → AES-256-CTR → HMAC-SHA256 → томи** (`ArchivePipeline`). Пароль береться зі змінної `SMARTARCHIVER_PASSWORD` або вводиться без показу. Пошкоджений архів дає код `E_SHORT`, `E_MAGIC`, `E_LENGTH`, `E_HMAC`, `E_PAYLOAD`, `E_CODE`, `E_CRC` або `E_VOLUMES` (`ArchivePipeline.TryUnpack`, без винятків); HMAC перевіряється до розшифрування. `unpack` атомарний: усе перевіряється в пам'яті, наявні файли не перезаписуються, часткового результату на диску немає. `measure` проганяє весь корпус через тракт і рахує `Q = α·S + β·T`; α, β, `t_ref` і місткість тому беруться з `team_config.json` (`alpha`, `beta`, `t_ref`, `max_volume_bytes`), а без нього це заглушки. Рішення 35–38 у `docs/decisions.md`.
+Чекпоінт 3: `pack` і `unpack` проходять повний тракт **аналіз → блоки → LZ77 → Гаффман → пакування → AES-256-CTR → HMAC-SHA256 → томи** (`ArchivePipeline`). Пароль береться зі змінної `SMARTARCHIVER_PASSWORD` або вводиться без показу. Пошкоджений архів дає код `E_SHORT`, `E_MAGIC`, `E_LENGTH`, `E_HMAC`, `E_PAYLOAD`, `E_CODE`, `E_CRC` або `E_VOLUMES` (`ArchivePipeline.TryUnpack`, без винятків); HMAC перевіряється до розшифрування. `unpack` атомарний: усе перевіряється в пам'яті, наявні файли не перезаписуються, часткового результату на диску немає. `measure` проганяє весь корпус через тракт і рахує `Q = α·S + β·T`; α, β, `t_ref` і місткість тому беруться з командного `team_config.json` у корені репозиторію (`alpha`, `beta`, `t_ref`, `max_volume_bytes`). Рішення 35–38 у `docs/decisions.md`.
 
-З `--volume-size` блоки розкладає по томах ДП-рюкзак: вага блока `coded_len + 15`, місткість тому `max_volume_bytes − 41 − 32 − 6 − таблиця файлів`, цінність за типом файлу. Блок, що не влазить у том, дає помилку `E_CAPACITY`. Пріоритети типів поки стандартні (заглушка), справжні читаються з `team_config.json` (`TeamConfig.Load`). Деталі — `docs/decisions.md`, рішення 29–33; приведення контейнера до специфікації — рішення 51.
+З `--volume-size` блоки розкладає по томах ДП-рюкзак: вага блока `coded_len + 15`, місткість тому `max_volume_bytes − 41 − 32 − 6 − таблиця файлів`, цінність за типом файлу. Блок, що не влазить у том, дає помилку `E_CAPACITY`. Пріоритети типів беруться з `team_config.json` (`пріоритети_типів`). Деталі — `docs/decisions.md`, рішення 29–33; приведення контейнера до специфікації — рішення 51.
 
 ## Графічний інтерфейс
 
@@ -87,7 +87,7 @@ dotnet run --project src/SmartArchiver.Cli -- encryption-order Datasets        #
 dotnet run --project src/SmartArchiver.Cli -- genetic-experiment Datasets      # 5. ГА проти випадкового пошуку
 ```
 
-`block-impact`, `pack-experiment` і `genetic-experiment` приймають `team_config.json` наступним параметром. Як таблиці зберігаються в БД і будуються з неї — рішення 47 у `docs/decisions.md`.
+Параметри (α, β, `t_ref`, місткість тому, пріоритети типів) усі команди беруть з `team_config.json` у корені репозиторію; інший файл можна передати наступним параметром. `pack-experiment` і `block-impact` використовують власний розмір тому як параметр досліду. Як таблиці зберігаються в БД і будуються з неї — рішення 47 у `docs/decisions.md`.
 
 ## Аналіз файлу
 
