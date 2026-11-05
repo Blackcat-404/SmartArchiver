@@ -1,0 +1,15 @@
+  Passed C1_01_TextFile_RoundTrips
+  Passed C1_02_EmptyAndOneByteFiles_RoundTrip
+  Passed C1_03_AllSevenCorpusGroups_RoundTrip_WithMatchingCrc32
+  Passed C1_04_IdenticalBytes_CompressManyTimes
+  Passed C1_05_Noise_IsStoredWithoutCompression_CodedLengthEqualsRawLength
+  Passed C1_06_AlreadyCompressedData_IsStoredWithoutCompression(name: "already_compressed.zip")
+  Passed C1_06_AlreadyCompressedData_IsStoredWithoutCompression(name: "deflate_data.bin")
+  Passed C1_06_AlreadyCompressedData_IsStoredWithoutCompression(name: "noise.png")
+  Passed C1_07_HuffmanCodesAreRebuiltFromCanonicalLengths
+  Passed C1_08_DegenerateAlphabet_OneSymbol_RoundTrips
+  Passed C1_09_GreedyAndLazyParsing_GiveSizesForEveryGroup_AndRoundTrip
+  Passed C1_10_DpKnapsack_IsNotWorseThanGreedy_OnTheFirstVolume
+  Passed C1_11_ChangedByte_WrongPassword_TruncatedArchive_AreRejected
+  Passed C1_12_ReferenceArchives_FromTheTeacher_Unpack
+  Passed C1_12_Volumes_AnyOrder_MissingOrDuplicateRejected_BigFileSplitAcrossVolumes

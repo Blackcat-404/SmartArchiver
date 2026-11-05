@@ -1,0 +1,179 @@
+Summary
+  Generated on: 11/5/2026 - 5:25:01 PM
+  Coverage date: 11/5/2026 - 5:21:54 PM - 11/5/2026 - 5:24:46 PM
+  Parser: MultiReport (6x Cobertura)
+  Assemblies: 7
+  Classes: 145
+  Files: 88
+  Line coverage: 86.4%
+  Covered lines: 3684
+  Uncovered lines: 576
+  Coverable lines: 4260
+  Total lines: 8834
+  Branch coverage: 77.5% (1490 of 1922)
+  Covered branches: 1490
+  Total branches: 1922
+  Method coverage: 87.4% (761 of 870)
+  Full method coverage: 79.8% (695 of 870)
+  Covered methods: 761
+  Fully covered methods: 695
+  Total methods: 870
+
+SmartArchiver.Analysis                                    98.4%
+  SmartArchiver.Analysis.BytePredictor                    98.3%
+  SmartArchiver.Analysis.ClassifierTrainer                  97%
+  SmartArchiver.Analysis.ConfusionMatrix                  98.1%
+  SmartArchiver.Analysis.DatasetSplit                      100%
+  SmartArchiver.Analysis.FeatureExtractor                  100%
+  SmartArchiver.Analysis.FeatureVector                     100%
+  SmartArchiver.Analysis.FileAnalyzer                      100%
+  SmartArchiver.Analysis.FileClassifier                   92.5%
+  SmartArchiver.Analysis.FileFeatures                      100%
+  SmartArchiver.Analysis.LabeledDataset                    100%
+  SmartArchiver.Analysis.LabeledFile                       100%
+  SmartArchiver.Analysis.LabeledSample                     100%
+  SmartArchiver.Analysis.Perceptron                       98.6%
+  SmartArchiver.Analysis.PredictorOptions                  100%
+  SmartArchiver.Analysis.TrainingOptions                   100%
+  SmartArchiver.Analysis.TrainingReport                    100%
+  SmartArchiver.Analysis.TrainingRunResult                 100%
+
+SmartArchiver.Archive                                     95.4%
+  SmartArchiver.Archive.ArchiveInput                       100%
+  SmartArchiver.Archive.ArchivePipeline                     94%
+  SmartArchiver.Archive.ArchiveReader                     99.1%
+  SmartArchiver.Archive.ArchiveResult<T>                   100%
+  SmartArchiver.Archive.ArchiveWriter                     93.6%
+  SmartArchiver.Archive.BinaryIo                          66.6%
+  SmartArchiver.Archive.BlockImpactComparison             95.6%
+  SmartArchiver.Archive.BlockImpactMeasurement             100%
+  SmartArchiver.Archive.ByteReader                        88.2%
+  SmartArchiver.Archive.CompressionTrial                   100%
+  SmartArchiver.Archive.CorpusMeasurer                     100%
+  SmartArchiver.Archive.Crc32                              100%
+  SmartArchiver.Archive.EncryptionCompressionExperiment    100%
+  SmartArchiver.Archive.EncryptionOrderComparison          100%
+  SmartArchiver.Archive.EncryptionOrderMeasurement         100%
+  SmartArchiver.Archive.ExtractedFile                      100%
+  SmartArchiver.Archive.FileMeasurement                    100%
+  SmartArchiver.Archive.FileTableEntry                    94.2%
+  SmartArchiver.Archive.FormatConstants                    100%
+  SmartArchiver.Archive.GroupedFile                        100%
+  SmartArchiver.Archive.Knapsack                          98.4%
+  SmartArchiver.Archive.MetadataLeakageAnalyzer           87.5%
+  SmartArchiver.Archive.MetadataLeakageReport              100%
+  SmartArchiver.Archive.PackBlock                          100%
+  SmartArchiver.Archive.PackFile                           100%
+  SmartArchiver.Archive.PackingComparison                  100%
+  SmartArchiver.Archive.PackingPlan                         60%
+  SmartArchiver.Archive.PackingPriorities                 89.6%
+  SmartArchiver.Archive.PackOptions                        100%
+  SmartArchiver.Archive.PaddingCost                        100%
+  SmartArchiver.Archive.PaddingCostResult                  100%
+  SmartArchiver.Archive.PredictionQComparison             93.7%
+  SmartArchiver.Archive.PredictionQMeasurement             100%
+  SmartArchiver.Archive.PreparedBlock                       75%
+  SmartArchiver.Archive.PreparedFile                       100%
+  SmartArchiver.Archive.ProtectedArchive                  93.2%
+  SmartArchiver.Archive.QMeasurement                        75%
+  SmartArchiver.Archive.QMetric                            100%
+  SmartArchiver.Archive.QScore                             100%
+  SmartArchiver.Archive.RecipientKeyExchange               100%
+  SmartArchiver.Archive.SafeNames                          100%
+  SmartArchiver.Archive.StrategyComparison                  98%
+  SmartArchiver.Archive.StrategyMeasurement                100%
+  SmartArchiver.Archive.TeamConfig                        96.8%
+  SmartArchiver.Archive.VolumeHeader                      95.1%
+  SmartArchiver.Archive.VolumeOptions                      100%
+  SmartArchiver.Archive.VolumePacker                      96.6%
+  SmartArchiver.Archive.VolumePlan                         100%
+
+SmartArchiver.Compression                                 84.8%
+  SmartArchiver.Compression.ArithmeticBenchmark             78%
+  SmartArchiver.Compression.ArithmeticBlockCodec          94.6%
+  SmartArchiver.Compression.Benchmarks.Zip9Benchmark         0%
+  SmartArchiver.Compression.BitReader                      100%
+  SmartArchiver.Compression.BitWriter                      100%
+  SmartArchiver.Compression.CanonicalHuffman               100%
+  SmartArchiver.Compression.DpBlockSplitter               98.3%
+  SmartArchiver.Compression.DpParser                       100%
+  SmartArchiver.Compression.EncodedLz77Block               100%
+  SmartArchiver.Compression.GreedyParser                   100%
+  SmartArchiver.Compression.HuffmanCodec                    98%
+  SmartArchiver.Compression.HuffmanLengths                97.7%
+  SmartArchiver.Compression.HuffmanSymbolDecoder           100%
+  SmartArchiver.Compression.HuffmanTableReader            96.4%
+  SmartArchiver.Compression.IterativeDpBenchmark          93.8%
+  SmartArchiver.Compression.IterativeParser                100%
+  SmartArchiver.Compression.LazyParser                     100%
+  SmartArchiver.Compression.Lz77BlockDecoder                96%
+  SmartArchiver.Compression.Lz77BlockEncoder              97.3%
+  SmartArchiver.Compression.Lz77CompressionService        88.8%
+  SmartArchiver.Compression.Lz77Decoder                     70%
+  SmartArchiver.Compression.Lz77ParsingBenchmark          93.7%
+  SmartArchiver.Compression.Lz77ParsingMeasurement         100%
+  SmartArchiver.Compression.Lz77PreparedBlock              100%
+  SmartArchiver.Compression.Lz77SearchOptions               80%
+  SmartArchiver.Compression.Lz77Token                      100%
+  SmartArchiver.Compression.MatchFinder                   95.5%
+  SmartArchiver.Compression.ParseCostModel                93.2%
+  SmartArchiver.Compression.ParsingComparisonRunner          0%
+  SmartArchiver.Compression.ParsingGroupMeasurement          0%
+
+SmartArchiver.Core                                         100%
+  SmartArchiver.Core.ArchiveException                      100%
+  SmartArchiver.Core.FileAnalysis                          100%
+
+SmartArchiver.Data                                        95.7%
+  SmartArchiver.Data.BlockImpactRow                        100%
+  SmartArchiver.Data.ConvergenceRow                        100%
+  SmartArchiver.Data.DatabaseException                     100%
+  SmartArchiver.Data.DatabaseSettings                      100%
+  SmartArchiver.Data.DesignTimeDbContextFactory            100%
+  SmartArchiver.Data.DisabledMeasurementStore             92.8%
+  SmartArchiver.Data.EncryptionOrderRow                   66.6%
+  SmartArchiver.Data.Entities.ArchiveOperation            90.9%
+  SmartArchiver.Data.Entities.BlockImpactResult           81.8%
+  SmartArchiver.Data.Entities.EncryptionOrderResult       71.4%
+  SmartArchiver.Data.Entities.Experiment                   100%
+  SmartArchiver.Data.Entities.GeneticIndividual             90%
+  SmartArchiver.Data.Entities.MeasurementFileResult       71.4%
+  SmartArchiver.Data.Entities.MeasurementRun              93.3%
+  SmartArchiver.Data.Entities.PackingResult                 80%
+  SmartArchiver.Data.Entities.ParsingResult                 75%
+  SmartArchiver.Data.Entities.PredictionQResult           84.6%
+  SmartArchiver.Data.Entities.PredictionResult              80%
+  SmartArchiver.Data.Entities.StrategyResult              83.3%
+  SmartArchiver.Data.Entities.TrainingRun                 83.3%
+  SmartArchiver.Data.GeneticJournalCsv                     100%
+  SmartArchiver.Data.MeasurementStore                      100%
+  SmartArchiver.Data.PackingRow                            100%
+  SmartArchiver.Data.ParetoRow                              75%
+  SmartArchiver.Data.ParsingRow                            100%
+  SmartArchiver.Data.ReportData                            100%
+  SmartArchiver.Data.ReportSource                          100%
+  SmartArchiver.Data.ReportTable<T>                        100%
+  SmartArchiver.Data.ReportTables                          100%
+  SmartArchiver.Data.SmartArchiverDbContext                100%
+  SmartArchiver.Data.SqlMeasurementStore                   100%
+
+SmartArchiver.Optimization                                51.5%
+  SmartArchiver.Optimization.BasicChromosome              55.5%
+  SmartArchiver.Optimization.BasicChromosomeSpace         65.4%
+  SmartArchiver.Optimization.ChromosomeJson                 68%
+  SmartArchiver.Optimization.CorpusFitnessEvaluator          0%
+  SmartArchiver.Optimization.CorpusFitnessSettings           0%
+  SmartArchiver.Optimization.EvaluatedCandidate<T>         100%
+  SmartArchiver.Optimization.FitnessResult                71.4%
+  SmartArchiver.Optimization.FullChromosome               61.1%
+  SmartArchiver.Optimization.FullChromosomeSpace          51.5%
+  SmartArchiver.Optimization.GeneticAlgorithm<T>            97%
+  SmartArchiver.Optimization.GeneticSearchOptions          100%
+  SmartArchiver.Optimization.LocalSearch<T>                  0%
+  SmartArchiver.Optimization.LocalSearchOptions              0%
+  SmartArchiver.Optimization.ParetoFront                   100%
+  SmartArchiver.Optimization.RandomSearch<T>              96.5%
+  SmartArchiver.Optimization.SearchRun<T>                 71.4%
+
+SmartArchiver.Security                                    92.8%
+  SmartArchiver.Security.ArchiveSecurity                  92.8%
