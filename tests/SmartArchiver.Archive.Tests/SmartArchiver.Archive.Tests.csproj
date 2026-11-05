@@ -7,6 +7,8 @@
     <Using Include="SmartArchiver.Core" />
     <!-- Real bad_*.arc and expected_failures.json from the teacher, see Bad/README.md. -->
     <None Include="Bad\**" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Teacher reference archives ref_*.arc with ref_*.json, see Reference/README.md. -->
+    <None Include="Reference\**" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
   <ItemGroup>
     <Compile Include="../SmartArchiver.Compression.Tests/CorpusRoundTripTests.cs"
